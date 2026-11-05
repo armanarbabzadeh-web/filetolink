@@ -25,16 +25,18 @@ const PLANS = {
   free: { title: 'رایگان', quota: 100e6, price: 0, fw: 4 },
   p500: { title: '۵۰۰ مگابایت (هدیه عضویت)', quota: 500e6, price: 0, fw: 4 }, // welcome gift only
   // fw = fair-use monthly viewing as a multiple of the plan's storage (not shown to users)
-  p1g: { title: '۱ گیگابایت', quota: 1e9, price: 12_900, fw: 4 },
-  p5g: { title: '۵ گیگابایت', quota: 5e9, price: 49_900, fw: 4 },
-  p20g: { title: '۲۰ گیگابایت', quota: 20e9, price: 179_000, fw: 4, badge: '⭐ محبوب‌ترین' },
-  p50g: { title: '۵۰ گیگابایت', quota: 50e9, price: 439_000, fw: 4, badge: '💎 به‌صرفه‌ترین' },
+  p1g: { title: '۱ گیگابایت', quota: 1e9, price: 9_900, fw: 4, util: 0.7 },
+  p5g: { title: '۵ گیگابایت', quota: 5e9, price: 34_900, fw: 4, util: 0.6 },
+  p20g: { title: '۲۰ گیگابایت', quota: 20e9, price: 99_000, fw: 4, util: 0.5, badge: '⭐ محبوب‌ترین' },
+  p50g: { title: '۵۰ گیگابایت', quota: 50e9, price: 199_000, fw: 4, util: 0.4, badge: '💎 به‌صرفه‌ترین' },
 };
 const PLAN_ORDER = ['free', 'p500', 'p1g', 'p5g', 'p20g', 'p50g']; // for upgrade/downgrade checks
 const SALE = ['p1g', 'p5g', 'p20g', 'p50g'];
 // Arvan cost per GB incl. 10% VAT (toman): storage per month, download traffic.
 const ARVAN_STORE_GB = 3960;
 const ARVAN_TRAFFIC_GB = 1062;
+// Realistic pricing basis: average share of the quota actually used, and views per stored GB per month.
+const VIEWS_PER_GB = 2;
 const PERIODS = [1, 3, 6, 12];                                      // months
 const PERIOD_TITLE = { 1: 'یک ماهه', 3: 'سه ماهه', 6: 'شش ماهه', 12: 'یک ساله' };                        // plans that can be bought or gifted
 const PLAN_ALIAS = { '1': 'p1g', '1g': 'p1g', p1g: 'p1g', '5': 'p5g', '5g': 'p5g', p5g: 'p5g',
@@ -224,17 +226,18 @@ export class Store extends DurableObject {
       mult_up: '10',
       ...Object.fromEntries(Object.keys(PLANS).map((k) => ['fw_' + k, String(PLANS[k].fw)])),
       ...Object.fromEntries(SALE.map((k) => ['price_' + k, String(PLANS[k].price)])),
-      disc_3: '5', disc_6: '10', disc_12: '15',
+      disc_3: '10', disc_6: '15', disc_12: '25',
     })[key] ?? null;
   }
   price(plan) { return Number(this.setting('price_' + plan)) || 0; }
   fairWatch(plan) { return Number(this.setting('fw_' + plan)) || PLANS[plan]?.fw || 3; }
   discount(months) { return months === 1 ? 0 : Math.min(90, Number(this.setting('disc_' + months)) || 0); }
-  // Worst-case Arvan cost of a plan per month (full storage + full viewing cap) plus a 5% safety margin.
-  floorMonthly(plan) {
-    const gb = PLANS[plan].quota / 1e9;
-    return gb * (ARVAN_STORE_GB + this.fairWatch(plan) * ARVAN_TRAFFIC_GB) * 1.05;
+  // Estimated real Arvan cost of a plan per month (typical usage), without and with a 5% margin.
+  estCost(plan) {
+    const gb = (PLANS[plan].quota / 1e9) * (PLANS[plan].util || 0.6);
+    return gb * (ARVAN_STORE_GB + VIEWS_PER_GB * ARVAN_TRAFFIC_GB);
   }
+  floorMonthly(plan) { return this.estCost(plan) * 1.05; }
   // Psychological price: nearest amount ending in 9,000 (189,000 rather than 190,000).
   charm(x) { return x < 100_000 ? Math.max(4900, Math.round((x + 100) / 1000) * 1000 - 100) : Math.round((x + 1000) / 10000) * 10000 - 1000; }
   // Total for a period. Discounts never push the price below the worst-case cost.
@@ -1291,7 +1294,7 @@ export class Store extends DurableObject {
       `👤 به نام: ${esc(this.setting('card_name'))}`,
       `🏦 بانک: ${esc(this.setting('card_bank'))}`,
       '',
-      ...SALE.map((k) => `📦 ${PLANS[k].title}: ${faNum(this.price(k))} تومان — بدترین هزینه آروان ${faNum(Math.round(this.floorMonthly(k) / 1.05 / 1000) * 1000)}${this.price(k) < this.floorMonthly(k) ? ' ⚠️ ضررده!' : ' ✅'}`),
+      ...SALE.map((k) => `📦 ${PLANS[k].title}: ${faNum(this.price(k))} تومان — هزینه تخمینی آروان ${faNum(Math.round(this.estCost(k) / 100) * 100)} — سود ${faNum(Math.round((this.price(k) - this.estCost(k)) / 100) * 100)}${this.price(k) < this.floorMonthly(k) ? ' ⚠️ ضررده!' : ' ✅'}`),
       '',
       `🏷 تخفیف خرید چندماهه: ۳ ماهه ${faNum(this.discount(3))}٪ — ۶ ماهه ${faNum(this.discount(6))}٪ — یک ساله ${faNum(this.discount(12))}٪`,
       `⬆️ مصرف منصفانه آپلود: ${faNum(Number(this.setting('mult_up')))} برابر فضای پلن (برای شما هزینه‌ای ندارد)`,
