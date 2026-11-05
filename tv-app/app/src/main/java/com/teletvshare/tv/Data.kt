@@ -91,6 +91,7 @@ object Api {
 
     suspend fun manifest(url: String): Manifest = withContext(Dispatchers.IO) {
         val (status, body) = Net.get(url)
+        android.util.Log.i("TeleTVShare", "manifest HTTP $status")
         if (status == 403 || status == 404) throw UnlinkedException()
         if (status != 200) throw RuntimeException("HTTP $status")
         val j = JSONObject(body)

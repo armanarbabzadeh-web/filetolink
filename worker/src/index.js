@@ -1766,6 +1766,18 @@ export class Store extends DurableObject {
       try { return Response.json(await this.migrateOne()); } catch (e) { return Response.json({ error: String(e.stack || e) }, { status: 500 }); }
     }
     if (p === '/api/admin/payments') return Response.json(this.q('SELECT * FROM payments ORDER BY id'));
+    if (p === '/api/admin/app' && req.method === 'POST') {
+      const buf = await req.arrayBuffer();
+      if (buf.byteLength < 100_000) return Response.json({ error: 'too small' }, { status: 400 });
+      const key = 'app/TeleTVShare.apk';
+      await this.s3put(key, buf, { type: 'application/vnd.android.package-archive', cache: 'no-cache, max-age=0', disposition: 'attachment; filename="TeleTVShare.apk"' });
+      this.meta('app_key', key);
+      this.meta('app_size', buf.byteLength);
+      this.meta('app_version', (url.searchParams.get('version') || '').slice(0, 20) || null);
+      this.meta('app_at', Date.now());
+      this.meta('app_file_id', null);
+      return Response.json({ ok: true, url: this.publicUrl(key), size: buf.byteLength });
+    }
     if (p === '/api/admin/support') return Response.json(this.q('SELECT * FROM support ORDER BY created_at'));
     if (p === '/api/admin/gifts') return Response.json(this.q('SELECT * FROM gift_codes ORDER BY created_at'));
     if (p === '/api/admin/settings' && req.method === 'PATCH') {

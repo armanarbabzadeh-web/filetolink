@@ -6,7 +6,11 @@ APK=$(ls apk/*.apk | head -1)
 mkdir -p shots
 shot() { sleep "$2"; adb exec-out screencap -p > "shots/$1.png"; }
 
+curl -s -o /dev/null -w "runner manifest HTTP %{http_code}
+" "$DEMO_MANIFEST"
+adb shell date
 adb install -r "$APK"
+adb logcat -c
 adb shell settings put system screen_off_timeout 1800000
 
 # 1. pairing screen
@@ -51,4 +55,5 @@ adb shell input keyevent KEYCODE_DPAD_UP
 adb shell input keyevent KEYCODE_DPAD_UP
 adb shell input keyevent KEYCODE_MOVE_END
 shot 7-header-focus 2
+adb logcat -d | grep -iE "TeleTVShare|AndroidRuntime|SSL|Cleartext" | tail -40
 exit 0

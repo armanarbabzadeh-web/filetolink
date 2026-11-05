@@ -114,6 +114,7 @@ class MainActivity : AppCompatActivity() {
         } catch (e: UnlinkedException) {
             unlinked(getString(R.string.unlinked))
         } catch (e: Exception) {
+            android.util.Log.w("TeleTVShare", "manifest load failed", e)
             if (manual || known == null) toast(getString(R.string.error))
         }
     }
