@@ -35,6 +35,11 @@
             android:id="@+id/btnRefresh"
             style="@style/Tab"
             android:text="@string/refresh" />
+
+        <TextView
+            android:id="@+id/btnLogout"
+            style="@style/Tab"
+            android:text="@string/logout" />
     </LinearLayout>
 
     <LinearLayout

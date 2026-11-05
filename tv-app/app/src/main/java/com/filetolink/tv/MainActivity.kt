@@ -28,8 +28,15 @@ class MainActivity : AppCompatActivity() {
     private var filter: String? = null
     private var pollJob: Job? = null
 
+    private var token: String = ""
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        token = Session.token(this) ?: run {
+            startActivity(Intent(this, PairActivity::class.java))
+            finish()
+            return
+        }
         setContentView(R.layout.activity_main)
         grid = findViewById(R.id.grid)
         status = findViewById(R.id.status)
@@ -48,6 +55,7 @@ class MainActivity : AppCompatActivity() {
         )
         tabs.forEach { (view, kind) -> view.setOnClickListener { setFilter(kind) } }
         findViewById<View>(R.id.btnRefresh).setOnClickListener { refresh(showLoading = true) }
+        findViewById<View>(R.id.btnLogout).setOnClickListener { confirmLogout() }
         setFilter(null)
         tabs[0].first.requestFocus()
     }
@@ -93,7 +101,7 @@ class MainActivity : AppCompatActivity() {
         }
         lifecycleScope.launch {
             try {
-                val res = Api.list()
+                val res = Api.list(token)
                 val ids = res.files.map { it.id }.toSet()
                 val prev = knownIds
                 if (prev != null) {
@@ -101,13 +109,15 @@ class MainActivity : AppCompatActivity() {
                     if (added > 0) toast(getString(R.string.new_files, added))
                 }
                 knownIds = ids
-                usage.text = "${Fmt.size(res.used)} از ${Fmt.size(res.quota)} · ${res.files.size} فایل"
+                usage.text = "${res.userName} · ${res.plan} · ${Fmt.size(res.used)} از ${Fmt.size(res.quota)}"
                 val changed = res.files.map { it.id } != all.map { it.id }
                 all = res.files
                 status.text = ""
                 if (changed || showLoading) render() else status.visibility =
                     if (visible().isEmpty()) View.VISIBLE else View.GONE
                 if (visible().isEmpty()) status.text = getString(R.string.empty)
+            } catch (e: UnauthorizedException) {
+                unlinked()
             } catch (e: Exception) {
                 if (all.isEmpty()) {
                     status.text = getString(R.string.error, e.message ?: e.javaClass.simpleName)
@@ -149,7 +159,7 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton(R.string.delete_yes) { _, _ ->
                 lifecycleScope.launch {
                     try {
-                        Api.delete(f.id)
+                        Api.delete(token, f.id)
                         all = all.filter { it.id != f.id }
                         knownIds = knownIds?.minus(f.id)
                         render()
@@ -157,6 +167,27 @@ class MainActivity : AppCompatActivity() {
                     } catch (e: Exception) {
                         toast(getString(R.string.error, e.message ?: ""))
                     }
+                }
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    private fun unlinked() {
+        Session.clear(this)
+        startActivity(Intent(this, PairActivity::class.java).putExtra("reason", getString(R.string.unlinked)))
+        finish()
+    }
+
+    private fun confirmLogout() {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.logout_q)
+            .setPositiveButton(R.string.logout) { _, _ ->
+                lifecycleScope.launch {
+                    Api.unlink(token)
+                    Session.clear(this@MainActivity)
+                    startActivity(Intent(this@MainActivity, PairActivity::class.java))
+                    finish()
                 }
             }
             .setNegativeButton(R.string.cancel, null)

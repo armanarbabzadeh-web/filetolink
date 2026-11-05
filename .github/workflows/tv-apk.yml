@@ -23,8 +23,12 @@ jobs:
       - name: Build APK
         env:
           WORKER_URL: ${{ secrets.WORKER_URL }}
-          API_KEY: ${{ secrets.API_KEY }}
-        run: gradle -p tv-app assembleRelease --no-daemon
+          TV_KEYSTORE_B64: ${{ secrets.TV_KEYSTORE_B64 }}
+          TV_KEYSTORE_PASSWORD: ${{ secrets.TV_KEYSTORE_PASSWORD }}
+        run: |
+          echo "$TV_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/tv.jks"
+          export TV_KEYSTORE="$RUNNER_TEMP/tv.jks"
+          gradle -p tv-app assembleRelease --no-daemon
 
       - uses: actions/upload-artifact@v4
         with:

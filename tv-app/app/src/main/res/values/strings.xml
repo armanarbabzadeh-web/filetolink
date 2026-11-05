@@ -17,4 +17,11 @@
     <string name="new_files">%1$d فایل جدید رسید</string>
     <string name="hint">OK: باز کردن  •  نگه داشتن OK یا دکمه منو: پاک کردن</string>
     <string name="open_link">لینک فایل:</string>
+    <string name="pair_title">اتصال به حساب تلگرام</string>
+    <string name="pair_step1">۱. کد QR را با دوربین گوشی اسکن کنید تا تلگرام باز شود و Start را بزنید.</string>
+    <string name="pair_step2">۲. یا در بات @%1$s روی «📺 تلویزیون» بزنید و این کد را بفرستید:</string>
+    <string name="pair_note">هر حساب فقط روی یک تلویزیون کار می‌کند؛ با وصل شدن این تلویزیون، تلویزیون قبلی قطع می‌شود.</string>
+    <string name="unlinked">این تلویزیون از حساب جدا شد (احتمالاً تلویزیون دیگری وصل شده). دوباره وصل کنید.</string>
+    <string name="logout">خروج</string>
+    <string name="logout_q">این تلویزیون از حساب تلگرام جدا شود؟</string>
 </resources>

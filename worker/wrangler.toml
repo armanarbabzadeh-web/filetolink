@@ -8,6 +8,10 @@ workers_dev = true
 OWNER_ID = "254587583"
 PUBLIC_URL = "https://filetolink.arman-arbabzadeh.workers.dev"
 GITHUB_REPO = "armanarbabzadeh-web/filetolink"
+BOT_USERNAME = "AazFiletolinkbot"
+CARD_NUMBER = "6219861061353297"
+CARD_NAME = "آرمان ارباب‌زاده"
+CARD_BANK = "بانک سامان"
 
 
 [[durable_objects.bindings]]

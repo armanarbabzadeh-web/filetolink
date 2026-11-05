@@ -24,6 +24,9 @@
             </intent-filter>
         </activity>
         <activity
+            android:name=".PairActivity"
+            android:screenOrientation="landscape" />
+        <activity
             android:name=".PlayerActivity"
             android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout"
             android:screenOrientation="landscape" />

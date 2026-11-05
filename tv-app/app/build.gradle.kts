@@ -23,18 +23,31 @@ android {
         applicationId = "com.filetolink.tv"
         minSdk = 21
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "2.0"
         buildConfigField("String", "BASE_URL", "\"${envValue("WORKER_URL")}\"")
-        buildConfigField("String", "API_KEY", "\"${envValue("API_KEY")}\"")
+        buildConfigField("String", "BOT_USERNAME", "\"AazFiletolinkbot\"")
     }
 
     buildFeatures { buildConfig = true }
 
+    // Fixed release key so new versions install over old ones (CI writes it from a secret).
+    val ksFile = System.getenv("TV_KEYSTORE")?.let { file(it) }
+    signingConfigs {
+        if (ksFile != null && ksFile.exists()) {
+            create("release") {
+                storeFile = ksFile
+                storePassword = System.getenv("TV_KEYSTORE_PASSWORD")
+                keyAlias = "tv"
+                keyPassword = System.getenv("TV_KEYSTORE_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
     }
     compileOptions {
@@ -53,4 +66,5 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.4.1")
     implementation("androidx.media3:media3-ui:1.4.1")
     implementation("io.coil-kt:coil:2.7.0")
+    implementation("com.google.zxing:core:3.5.3")
 }
