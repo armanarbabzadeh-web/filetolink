@@ -914,6 +914,7 @@ export class Store extends DurableObject {
     const state = this.meta('admin_state');
     if (!cmd && state) {
       this.meta('admin_state', null);
+      if (state.startsWith('gift:')) return this.giftCustom(chat, state.slice(5), text);
       return this.applySetting(chat, state, text);
     }
     if (cmd) this.meta('admin_state', null);
@@ -928,7 +929,8 @@ export class Store extends DurableObject {
       const v = this.adminUserView(id);
       return A(v.text, v.kb);
     }
-    if (name === 'gift') {
+    if (name === 'gift' || name === 'newgift') { this.giftWiz({}); return this.giftStep(chat); }
+    if (name === 'giftcmd') {
       const [planArg, daysArg, usesArg] = arg.split(/\s+/);
       const plan = PLAN_ALIAS[String(planArg || '').toLowerCase()];
       if (!plan) return A(this.giftHelp());
@@ -952,7 +954,8 @@ export class Store extends DurableObject {
   adminMenu() {
     return [
       [{ text: '🧾 رسیدها', callback_data: 'ap' }, { text: '👥 کاربران', callback_data: 'U:0' }],
-      [{ text: '🎁 کدهای هدیه', callback_data: 'ag' }, { text: '⚙️ تنظیمات', callback_data: 'as' }],
+      [{ text: '➕ ساخت کد هدیه', callback_data: 'gw' }, { text: '🎁 کدهای هدیه', callback_data: 'ag' }],
+      [{ text: '⚙️ تنظیمات', callback_data: 'as' }],
       [{ text: '📊 آمار', callback_data: 'am' }],
     ];
   }
@@ -961,9 +964,94 @@ export class Store extends DurableObject {
     return [
       '🛠 <b>بات مدیریت TeleTVShare</b>',
       '/stats — آمار', '/users — کاربران', '/user شناسه یا @username — مدیریت کاربر',
-      '/payments — رسیدها', '/gift — ساخت کد هدیه', '/gifts — کدها', '/delgift کد — حذف کد',
+      '/payments — رسیدها', '/gift — ساخت کد هدیه (مرحله‌به‌مرحله)', '/gifts — کدها', '/delgift کد — حذف کد',
       '/settings — شماره کارت، قیمت‌ها و سقف‌ها',
     ].join('\n');
+  }
+
+  // ---- gift code wizard (admin bot): plan -> days -> uses per code -> number of codes -> confirm
+  giftWiz(v) {
+    if (v === undefined) {
+      try { return JSON.parse(this.meta('gift_wiz') || '{}'); } catch { return {}; }
+    }
+    this.meta('gift_wiz', v ? JSON.stringify(v) : null);
+  }
+
+  async giftStep(chat, msgId) {
+    const w = this.giftWiz();
+    const cancel = [{ text: '❌ لغو', callback_data: 'gn' }];
+    const nums = (prefix, list, unit) => [
+      list.map((n) => ({ text: `${faNum(n)}${unit}`, callback_data: `${prefix}:${n}` })),
+      [{ text: '✏️ عدد دلخواه', callback_data: `${prefix}:x` }],
+      cancel,
+    ];
+    let text, kb;
+    if (!w.plan) {
+      text = '🎁 <b>ساخت کد هدیه</b>\n\n۱ از ۴ — <b>پلن</b> کد هدیه را انتخاب کنید:';
+      kb = [...SALE.map((k) => [{ text: `${PLANS[k].title}`, callback_data: `gp:${k}` }]), cancel];
+    } else if (!w.days) {
+      text = `🎁 پلن: <b>${PLANS[w.plan].title}</b>\n\n۲ از ۴ — <b>مدت اعتبار</b> اشتراک چند روز باشد؟`;
+      kb = nums('gd', [7, 30, 90, 180], ' روز');
+    } else if (!w.uses) {
+      text = `🎁 ${PLANS[w.plan].title} — ${faNum(w.days)} روز\n\n۳ از ۴ — <b>هر کد چند بار</b> قابل استفاده باشد؟ (هر کاربر فقط یک بار)`;
+      kb = nums('gu', [1, 5, 10, 50], ' بار');
+    } else if (!w.count) {
+      text = `🎁 ${PLANS[w.plan].title} — ${faNum(w.days)} روز — هر کد ${faNum(w.uses)} بار\n\n۴ از ۴ — <b>چند کد</b> با این مشخصات ساخته شود؟`;
+      kb = nums('gc', [1, 5, 10, 20, 50], ' کد');
+    } else {
+      text = [
+        '🎁 <b>تأیید ساخت کد هدیه</b>', '',
+        `📦 پلن: ${PLANS[w.plan].title}`,
+        `⏳ مدت: ${faNum(w.days)} روز`,
+        `🔁 هر کد: ${faNum(w.uses)} بار استفاده`,
+        `🔢 تعداد کد: ${faNum(w.count)}`,
+        '', `در مجموع ${faNum(w.uses * w.count)} نفر می‌توانند اشتراک هدیه بگیرند.`,
+      ].join('\n');
+      kb = [[{ text: '✅ بساز', callback_data: 'gy' }], cancel];
+    }
+    return msgId ? this.edit(chat, msgId, text, kb, 'admin') : this.send(chat, text, kb, null, 'admin');
+  }
+
+  async giftCustom(chat, field, raw) {
+    const n = Number(String(raw).trim().replace(/[۰-۹]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d)).replace(/[,\s٬]/g, ''));
+    const [min, max, label] = { days: [1, 365, 'روز'], uses: [1, 10000, 'تعداد استفاده'], count: [1, 200, 'تعداد کد'] }[field];
+    if (!Number.isInteger(n) || n < min || n > max) {
+      this.meta('admin_state', `gift:${field}`);
+      return this.send(chat, `❌ ${label} باید عددی بین ${faNum(min)} و ${faNum(max)} باشد. دوباره بفرستید:`, null, null, 'admin');
+    }
+    const w = this.giftWiz();
+    w[field] = n;
+    this.giftWiz(w);
+    return this.giftStep(chat);
+  }
+
+  async giftCreate(chat, msgId) {
+    const w = this.giftWiz();
+    if (!w.plan || !w.days || !w.uses || !w.count) return this.giftStep(chat, msgId);
+    this.giftWiz(null);
+    const codes = [];
+    while (codes.length < w.count) {
+      const c = giftCode();
+      if (this.one('SELECT 1 AS x FROM gift_codes WHERE code=?', c)) continue;
+      this.sql.exec('INSERT INTO gift_codes(code, plan, days, max_uses, created_at) VALUES (?,?,?,?,?)', c, w.plan, w.days, w.uses, Date.now());
+      codes.push(c);
+    }
+    const head = `✅ <b>${faNum(codes.length)} کد هدیه ساخته شد</b>\n📦 ${PLANS[w.plan].title} — ⏳ ${faNum(w.days)} روز — 🔁 هر کد ${faNum(w.uses)} بار`;
+    const howto = `کاربر در @${this.env.BOT_USERNAME} روی «🎁 کد هدیه» می‌زند و کد را می‌فرستد.`;
+    await this.edit(chat, msgId, head, null, 'admin');
+    if (codes.length <= 40) {
+      return this.send(chat, `${head}\n\n${codes.map((c) => `<code>${c}</code>`).join('\n')}\n\n${howto}`, [[{ text: '➕ کد جدید', callback_data: 'gw' }]], null, 'admin');
+    }
+    // long batches: one text file with every code and its one-click link
+    const lines = [`TeleTVShare gift codes — ${w.plan} — ${w.days} days — ${w.uses} use(s) each`, '',
+      ...codes.map((c) => `${c}\thttps://t.me/${this.env.BOT_USERNAME}?start=gift_${c}`)];
+    const form = new FormData();
+    form.set('chat_id', String(this.env.OWNER_ID));
+    form.set('caption', `${head}\n\n${howto}`);
+    form.set('parse_mode', 'HTML');
+    form.set('document', new Blob([lines.join('\n')], { type: 'text/plain' }), `gift-codes-${codes.length}.txt`);
+    this.sub = (this.sub || 0) + 1;
+    await fetch(`https://api.telegram.org/bot${this.env.ADMIN_BOT_TOKEN}/sendDocument`, { method: 'POST', body: form });
   }
 
   giftHelp() {
@@ -980,7 +1068,7 @@ export class Store extends DurableObject {
     const rows = this.q('SELECT * FROM gift_codes ORDER BY created_at DESC LIMIT 30');
     return rows.length
       ? '🎁 <b>کدهای هدیه</b>\n\n' + rows.map((g) => `<code>${g.code}</code> — ${PLANS[g.plan].title}، ${faNum(g.days)} روز — ${faNum(g.used)}/${faNum(g.max_uses)}`).join('\n')
-      : 'هنوز کدی ساخته نشده.\n\n' + this.giftHelp();
+      : 'هنوز کدی ساخته نشده.';
   }
 
   paymentsText() {
@@ -1058,7 +1146,22 @@ export class Store extends DurableObject {
       return answer();
     }
     if (op === 'ag') { await A(this.giftsText(), [[{ text: '➕ کد جدید', callback_data: 'gh' }]]); return answer(); }
-    if (op === 'gh') { await A(this.giftHelp()); return answer(); }
+    if (op === 'gh' || op === 'gw') { this.giftWiz({}); await this.giftStep(chatId); return answer(); }
+    if (op === 'gn') { this.giftWiz(null); this.meta('admin_state', null); await E('❌ ساخت کد هدیه لغو شد.'); return answer(); }
+    if (op === 'gy') { await this.giftCreate(chatId, msgId); return answer('ساخته شد'); }
+    if (op === 'gp' || op === 'gd' || op === 'gu' || op === 'gc') {
+      const field = { gp: 'plan', gd: 'days', gu: 'uses', gc: 'count' }[op];
+      if (a === 'x') {
+        this.meta('admin_state', `gift:${field}`);
+        await A(`✏️ ${{ days: 'تعداد روز اعتبار', uses: 'تعداد دفعات استفاده از هر کد', count: 'تعداد کدها' }[field]} را به عدد بفرستید:`);
+        return answer();
+      }
+      const w = this.giftWiz();
+      if (op === 'gp') { if (!SALE.includes(a)) return answer(); w.plan = a; } else w[field] = Number(a);
+      this.giftWiz(w);
+      await this.giftStep(chatId, msgId);
+      return answer();
+    }
     if (op === 'as') { await A(this.settingsText(), this.settingsKeyboard()); return answer(); }
     if (op === 'se') {
       this.meta('admin_state', a);
