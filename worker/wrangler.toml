@@ -7,6 +7,7 @@ workers_dev = true
 [vars]
 OWNER_ID = "254587583"
 PUBLIC_URL = "https://filetolink.arman-arbabzadeh.workers.dev"
+GITHUB_REPO = "armanarbabzadeh-web/filetolink"
 
 
 [[durable_objects.bindings]]

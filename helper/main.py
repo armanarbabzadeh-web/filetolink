@@ -180,5 +180,32 @@ async def main():
     await asyncio.gather(job_loop(), keep_awake())
 
 
+async def run_once():
+    """GitHub Actions mode: move every queued large file, then exit."""
+    global http
+    http = ClientSession(
+        timeout=ClientTimeout(total=None, sock_connect=30, sock_read=300),
+        headers={"User-Agent": "FileToLinkHelper/1.0"},
+    )
+    await tg.start()
+    log.info("logged in as @%s", (await tg.get_me()).username)
+    tried = set()
+    try:
+        while True:
+            data = await call("GET", "/helper/jobs")
+            jobs = [j for j in data.get("jobs", []) if j["id"] not in tried]
+            if not jobs:
+                break
+            for job in jobs:
+                tried.add(job["id"])
+                await process(job, data["chunk"])
+    finally:
+        await tg.stop()
+        await http.close()
+    log.info("queue empty, %d job(s) handled", len(tried))
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    import sys
+
+    asyncio.run(run_once() if "--once" in sys.argv else main())

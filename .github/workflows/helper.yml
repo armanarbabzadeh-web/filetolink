@@ -1,0 +1,39 @@
+name: Large file helper
+
+# Started by the Cloudflare Worker (repository_dispatch) when a file over 20 MB
+# arrives. Moves every queued large file from Telegram to Cloudflare, then exits.
+on:
+  repository_dispatch:
+    types: [large-file]
+  workflow_dispatch:
+
+concurrency:
+  group: large-file-helper
+  cancel-in-progress: false
+
+jobs:
+  move:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: helper
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: helper/requirements.txt
+
+      - run: pip install -r helper/requirements.txt
+
+      - name: Move queued files
+        working-directory: helper
+        env:
+          API_ID: ${{ secrets.TG_API_ID }}
+          API_HASH: ${{ secrets.TG_API_HASH }}
+          BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          HELPER_SECRET: ${{ secrets.HELPER_SECRET }}
+          WORKER_URL: ${{ secrets.WORKER_URL }}
+        run: python main.py --once

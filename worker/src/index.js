@@ -307,6 +307,21 @@ export class Store extends DurableObject {
   }
 
   async wakeHelper() {
+    if (this.env.GITHUB_TOKEN && this.env.GITHUB_REPO) {
+      // Start the GitHub Actions helper run (see .github/workflows/helper.yml).
+      const r = await fetch(`https://api.github.com/repos/${this.env.GITHUB_REPO}/dispatches`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${this.env.GITHUB_TOKEN}`,
+          accept: 'application/vnd.github+json',
+          'user-agent': 'filetolink-worker',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ event_type: 'large-file' }),
+      }).catch((e) => ({ ok: false, status: String(e) }));
+      if (!r.ok) console.log('github dispatch failed', r.status, await r.text?.().catch(() => ''));
+      return r.ok;
+    }
     if (!this.env.HELPER_URL) return false;
     try {
       const r = await fetch(`${this.env.HELPER_URL.replace(/\/$/, '')}/wake`, {
