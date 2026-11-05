@@ -1,0 +1,8 @@
+.env
+.dev.vars
+node_modules/
+.wrangler/
+.gradle/
+build/
+local.properties
+*.apk

@@ -1,0 +1,20 @@
+<resources>
+    <string name="app_name">File to Link</string>
+    <string name="title">فایل‌های من</string>
+    <string name="tab_all">همه</string>
+    <string name="tab_video">ویدیو</string>
+    <string name="tab_image">عکس</string>
+    <string name="tab_audio">صوت</string>
+    <string name="tab_file">سایر</string>
+    <string name="refresh">بروزرسانی</string>
+    <string name="loading">در حال دریافت فهرست…</string>
+    <string name="empty">هنوز فایلی نیست. از تلگرام به بات بفرست.</string>
+    <string name="error">اتصال برقرار نشد. اینترنت یا VPN تلویزیون را بررسی کن.\n%1$s</string>
+    <string name="delete_q">این فایل پاک شود؟</string>
+    <string name="delete_yes">پاک کن</string>
+    <string name="cancel">نه</string>
+    <string name="deleted">پاک شد</string>
+    <string name="new_files">%1$d فایل جدید رسید</string>
+    <string name="hint">OK: باز کردن  •  نگه داشتن OK یا دکمه منو: پاک کردن</string>
+    <string name="open_link">لینک فایل:</string>
+</resources>
