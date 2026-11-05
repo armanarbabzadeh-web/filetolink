@@ -79,7 +79,7 @@ async def call(method, path, *, data=None, json=None, tries=4):
 
 async def process(job):
     jid, key, size = job["id"], job["obj_key"], job["size"]
-    log.info("job %s: %s (%d bytes)", jid, job["name"], size)
+    log.info("job %s (%d bytes)", jid, size)  # no file names: run logs of a public repo are public
     loop = asyncio.get_running_loop()
     mp = await loop.run_in_executor(None, lambda: s3.create_multipart_upload(
         Bucket=BUCKET, Key=key, ACL="public-read",
