@@ -43,7 +43,9 @@ object Prefs {
 
 object Net {
     fun get(url: String): Pair<Int, String> {
-        val c = URL(url).openConnection() as HttpURLConnection
+        // Unique query so no CDN edge or proxy can serve a cached (e.g. "not found yet") answer.
+        val fresh = url + (if ('?' in url) "&" else "?") + "t=" + System.currentTimeMillis()
+        val c = URL(fresh).openConnection() as HttpURLConnection
         c.connectTimeout = 15_000
         c.readTimeout = 30_000
         c.useCaches = false
@@ -80,6 +82,8 @@ object Api {
         val r = SecureRandom()
         return (1..8).map { CODE_ABC[r.nextInt(CODE_ABC.length)] }.joinToString("")
     }
+
+    fun isCode(s: String) = s.length == 8 && s.all { it in CODE_ABC }
 
     fun pairLink(code: String) = "https://t.me/${BuildConfig.BOT_USERNAME}?start=tv_$code"
 

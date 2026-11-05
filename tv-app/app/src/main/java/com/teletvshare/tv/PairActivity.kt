@@ -27,6 +27,8 @@ import kotlinx.coroutines.launch
 class PairActivity : AppCompatActivity() {
 
     private var job: Job? = null
+    private var code: String? = null
+    private var codeUntil = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -40,6 +42,8 @@ class PairActivity : AppCompatActivity() {
             openMain()
             return
         }
+        code = savedInstanceState?.getString("code")
+        codeUntil = savedInstanceState?.getLong("until") ?: 0L
         setContentView(R.layout.activity_pair)
         findViewById<TextView>(R.id.brand).text = brand(this)
         findViewById<TextView>(R.id.step2).text = getString(R.string.pair_step2, BuildConfig.BOT_USERNAME)
@@ -53,13 +57,26 @@ class PairActivity : AppCompatActivity() {
             val codeView = findViewById<TextView>(R.id.code)
             val qr = findViewById<ImageView>(R.id.qr)
             while (isActive) {
-                val code = Api.newCode()
+                // Keep the same code while the user switches to Telegram and back; renew it only when it expires.
+                if (code == null || System.currentTimeMillis() > codeUntil) {
+                    code = intent.getStringExtra("code")?.takeIf { Api.isCode(it) && code == null } ?: Api.newCode()
+                    codeUntil = System.currentTimeMillis() + 14 * 60_000L
+                }
+                val code = code!!
+                val until = codeUntil
                 codeView.text = code.substring(0, 4) + " " + code.substring(4)
                 qr.setImageBitmap(qrBitmap(Api.pairLink(code), 600))
-                val until = System.currentTimeMillis() + 14 * 60_000L
+                // check right away, then every 3 seconds
+                val first = runCatching { Api.pollPair(code) }.getOrNull()
+                if (first != null) {
+                    Prefs.setManifest(this@PairActivity, first)
+                    openMain()
+                    return@launch
+                }
                 while (isActive && System.currentTimeMillis() < until) {
                     delay(3_000)
-                    val manifest = runCatching { Api.pollPair(code) }.getOrNull()
+                    val manifest = runCatching { Api.pollPair(code) }
+                        .onFailure { android.util.Log.w("TeleTVShare", "pair poll failed", it) }.getOrNull()
                     if (manifest != null) {
                         Prefs.setManifest(this@PairActivity, manifest)
                         openMain()
@@ -73,6 +90,12 @@ class PairActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         job?.cancel()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString("code", code)
+        outState.putLong("until", codeUntil)
     }
 
     private fun openMain() {
