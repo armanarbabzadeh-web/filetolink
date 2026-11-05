@@ -1943,6 +1943,14 @@ export class Store extends DurableObject {
     if (kind === 'fail') {
       const why = (await req.text()).slice(0, 500) || 'helper error';
       this.sql.exec(`UPDATE files SET status='failed', error=? WHERE id=?`, why, id);
+      if (f.source_url) {
+        const blocked = /not a bot|sign in|login|logged-in|cookies/i.test(why);
+        await this.edit(f.chat_id, f.msg_id, blocked
+          ? '❌ این سایت فعلاً اجازه دانلود از سرور ما را نمی‌دهد. لطفاً بعداً دوباره امتحان کنید یا خود فایل ویدیو را در تلگرام بفرستید.'
+          : '❌ دانلود از این لینک ممکن نشد. ممکن است ویدیو خصوصی یا حذف شده باشد، یا این سایت پشتیبانی نشود.',
+          [[{ text: '❌ بستن', callback_data: `c:${id}` }]]);
+        return Response.json({ ok: true });
+      }
       await this.edit(f.chat_id, f.msg_id, `❌ ذخیره <b>${esc(f.name)}</b> ناموفق بود:\n<code>${esc(why)}</code>`,
         [[{ text: '🔁 دوباره', callback_data: `r:${id}` }, { text: '❌ لغو', callback_data: `c:${id}` }]]);
       return Response.json({ ok: true });

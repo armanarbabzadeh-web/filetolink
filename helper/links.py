@@ -14,8 +14,20 @@ import imageio_ffmpeg
 import yt_dlp
 
 FFMPEG = imageio_ffmpeg.get_ffmpeg_exe()
+
+
+class _Silent:
+    """yt-dlp would print URLs and titles; the run logs are public, so drop everything."""
+    def debug(self, msg): pass
+    def info(self, msg): pass
+    def warning(self, msg): pass
+    def error(self, msg): pass
+
+
+COOKIES = os.environ.get("YT_COOKIES_FILE")  # optional cookies.txt (needed for YouTube from cloud servers)
 BASE = {
-    "quiet": True, "no_warnings": True, "noplaylist": True, "socket_timeout": 30,
+    "quiet": True, "no_warnings": True, "noplaylist": True, "socket_timeout": 30, "logger": _Silent(),
+    **({"cookiefile": COOKIES} if COOKIES and os.path.exists(COOKIES) else {}),
     "ffmpeg_location": FFMPEG, "retries": 5, "fragment_retries": 5, "concurrent_fragment_downloads": 4,
 }
 HEIGHTS = [2160, 1440, 1080, 720, 480, 360, 240]

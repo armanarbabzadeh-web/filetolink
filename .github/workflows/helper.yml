@@ -46,4 +46,7 @@ jobs:
           ARVAN_BUCKET: teletvshare-files
           ARVAN_ACCESS_KEY: ${{ secrets.ARVAN_ACCESS_KEY }}
           ARVAN_SECRET_KEY: ${{ secrets.ARVAN_SECRET_KEY }}
-        run: python main.py
+          YT_COOKIES: ${{ secrets.YT_COOKIES }}
+        run: |
+          if [ -n "$YT_COOKIES" ]; then printf '%s' "$YT_COOKIES" > "$RUNNER_TEMP/cookies.txt"; export YT_COOKIES_FILE="$RUNNER_TEMP/cookies.txt"; fi
+          python main.py
