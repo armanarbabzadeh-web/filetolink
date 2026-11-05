@@ -55,5 +55,8 @@ adb shell input keyevent KEYCODE_DPAD_UP
 adb shell input keyevent KEYCODE_DPAD_UP
 adb shell input keyevent KEYCODE_MOVE_END
 shot 7-header-focus 2
-adb logcat -d | grep -iE "TeleTVShare|AndroidRuntime|SSL|Cleartext" | tail -40
+echo "=== CRASH BUFFER ==="
+adb logcat -d -b crash | head -80
+echo "=== APP LOG ==="
+adb logcat -d -s TeleTVShare | head -40
 exit 0
