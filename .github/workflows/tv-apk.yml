@@ -4,6 +4,11 @@ on:
   push:
     paths: ["tv-app/**", ".github/workflows/tv-apk.yml"]
   workflow_dispatch:
+    inputs:
+      screenshots:
+        description: "Also take screenshots in an Android TV emulator"
+        type: boolean
+        default: false
 
 jobs:
   build:
@@ -22,16 +27,56 @@ jobs:
 
       - name: Build APK
         env:
-          WORKER_URL: ${{ secrets.WORKER_URL }}
           TV_KEYSTORE_B64: ${{ secrets.TV_KEYSTORE_B64 }}
           TV_KEYSTORE_PASSWORD: ${{ secrets.TV_KEYSTORE_PASSWORD }}
         run: |
           echo "$TV_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/tv.jks"
           export TV_KEYSTORE="$RUNNER_TEMP/tv.jks"
           gradle -p tv-app assembleRelease --no-daemon
+          mkdir -p apk && cp tv-app/app/build/outputs/apk/release/*.apk apk/TeleTVShare.apk
 
       - uses: actions/upload-artifact@v4
         with:
-          name: FileToLinkTV
-          path: tv-app/app/build/outputs/apk/release/*.apk
-          retention-days: 30
+          name: TeleTVShare
+          path: apk/TeleTVShare.apk
+          retention-days: 7
+
+  screenshots:
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.screenshots
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: tv-app/ci
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: TeleTVShare
+          path: apk
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run in Android TV emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          DEMO_MANIFEST: ${{ secrets.DEMO_MANIFEST_URL }}
+        with:
+          api-level: 30
+          target: android-tv
+          arch: x86
+          profile: tv_1080p
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: bash tv-app/ci/shots.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: shots/*.png
+          retention-days: 1

@@ -1,22 +1,29 @@
 <resources>
     <style name="AppTheme" parent="Theme.AppCompat.NoActionBar">
-        <item name="android:windowBackground">@color/bg</item>
+        <item name="android:windowBackground">@drawable/bg_gradient</item>
         <item name="android:textColor">@color/text</item>
         <item name="colorAccent">@color/accent</item>
         <item name="android:windowFullscreen">true</item>
     </style>
-
-    <style name="Tab">
+    <style name="Chip">
         <item name="android:layout_width">wrap_content</item>
-        <item name="android:layout_height">40dp</item>
-        <item name="android:layout_marginStart">8dp</item>
-        <item name="android:paddingStart">20dp</item>
-        <item name="android:paddingEnd">20dp</item>
-        <item name="android:gravity">center</item>
-        <item name="android:textSize">16sp</item>
+        <item name="android:layout_height">60dp</item>
+        <item name="android:layout_marginEnd">14dp</item>
+        <item name="android:paddingStart">22dp</item>
+        <item name="android:paddingEnd">26dp</item>
+        <item name="android:gravity">center_vertical</item>
+        <item name="android:drawablePadding">12dp</item>
+        <item name="android:textSize">20sp</item>
+        <item name="android:textStyle">bold</item>
         <item name="android:textColor">@color/text</item>
-        <item name="android:background">@drawable/tab_bg</item>
+        <item name="android:background">@drawable/chip_bg</item>
         <item name="android:focusable">true</item>
         <item name="android:clickable">true</item>
+    </style>
+    <style name="IconButton" parent="Chip">
+        <item name="android:layout_height">56dp</item>
+        <item name="android:textSize">18sp</item>
+        <item name="android:layout_marginEnd">0dp</item>
+        <item name="android:layout_marginStart">12dp</item>
     </style>
 </resources>

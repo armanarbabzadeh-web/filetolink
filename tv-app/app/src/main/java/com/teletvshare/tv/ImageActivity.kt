@@ -1,4 +1,4 @@
-package com.filetolink.tv
+package com.teletvshare.tv
 
 import android.os.Bundle
 import android.view.KeyEvent
@@ -13,6 +13,7 @@ class ImageActivity : AppCompatActivity() {
 
     private lateinit var urls: Array<String>
     private lateinit var names: Array<String>
+    private lateinit var sizes: LongArray
     private var index = 0
     private lateinit var image: ImageView
     private lateinit var progress: ProgressBar
@@ -23,6 +24,7 @@ class ImageActivity : AppCompatActivity() {
         setContentView(R.layout.activity_image)
         urls = intent.getStringArrayExtra("urls") ?: emptyArray()
         names = intent.getStringArrayExtra("names") ?: emptyArray()
+        sizes = intent.getLongArrayExtra("sizes") ?: LongArray(urls.size)
         index = savedInstanceState?.getInt("index") ?: intent.getIntExtra("index", 0)
         image = findViewById(R.id.image)
         progress = findViewById(R.id.progress)
@@ -33,8 +35,9 @@ class ImageActivity : AppCompatActivity() {
     private fun show() {
         if (urls.isEmpty()) return finish()
         index = index.coerceIn(0, urls.size - 1)
-        caption.text = "${names.getOrNull(index) ?: ""}   (${index + 1} / ${urls.size})"
+        caption.text = "${names.getOrNull(index) ?: ""}    " + Fmt.fa("${index + 1} / ${urls.size}") + "    ◀ ▶"
         progress.visibility = View.VISIBLE
+        Usage.add(this, sizes.getOrElse(index) { 0L })
         image.load(urls[index]) {
             crossfade(true)
             listener(
@@ -44,17 +47,11 @@ class ImageActivity : AppCompatActivity() {
         }
     }
 
-    // The grid is right-to-left, so LEFT moves to the next photo and RIGHT to the previous one.
+    // The grid is right-to-left: LEFT goes to the next photo, RIGHT to the previous one.
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         when (keyCode) {
-            KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_MEDIA_NEXT, KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
-                if (index < urls.size - 1) { index++; show() }
-                return true
-            }
-            KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_MEDIA_PREVIOUS, KeyEvent.KEYCODE_MEDIA_REWIND -> {
-                if (index > 0) { index--; show() }
-                return true
-            }
+            KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_MEDIA_NEXT -> { if (index < urls.size - 1) { index++; show() }; return true }
+            KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_MEDIA_PREVIOUS -> { if (index > 0) { index--; show() }; return true }
         }
         return super.onKeyDown(keyCode, event)
     }

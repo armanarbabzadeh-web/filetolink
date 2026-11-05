@@ -1,19 +1,25 @@
-package com.filetolink.tv
+package com.teletvshare.tv
 
 import android.os.Bundle
+import android.view.KeyEvent
 import android.view.View
 import android.widget.TextView
 import android.widget.Toast
 import androidx.annotation.OptIn
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.TransferListener
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
+import kotlinx.coroutines.launch
 
 @OptIn(UnstableApi::class)
 class PlayerActivity : AppCompatActivity() {
@@ -21,6 +27,16 @@ class PlayerActivity : AppCompatActivity() {
     private var player: ExoPlayer? = null
     private lateinit var view: PlayerView
     private var position = 0L
+
+    // Counts streamed bytes for the fair-use report.
+    private val counter = object : TransferListener {
+        override fun onTransferInitializing(source: DataSource, dataSpec: DataSpec, isNetwork: Boolean) {}
+        override fun onTransferStart(source: DataSource, dataSpec: DataSpec, isNetwork: Boolean) {}
+        override fun onBytesTransferred(source: DataSource, dataSpec: DataSpec, isNetwork: Boolean, bytes: Int) {
+            if (isNetwork) Usage.add(this@PlayerActivity, bytes.toLong())
+        }
+        override fun onTransferEnd(source: DataSource, dataSpec: DataSpec, isNetwork: Boolean) {}
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -30,18 +46,20 @@ class PlayerActivity : AppCompatActivity() {
         position = savedInstanceState?.getLong("pos") ?: 0L
         val title = findViewById<TextView>(R.id.title)
         title.text = intent.getStringExtra("title")
-        view.setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { v ->
-            title.visibility = v
-        })
+        if (intent.getBooleanExtra("audio", false)) {
+            findViewById<View>(R.id.audioArt).visibility = View.VISIBLE
+            view.controllerShowTimeoutMs = 0
+        }
+        view.setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { v -> title.visibility = v })
     }
 
     override fun onStart() {
         super.onStart()
         val http = DefaultHttpDataSource.Factory()
-            .setUserAgent("FileToLinkTV/1.0")
+            .setUserAgent("TeleTVShare-TV/${BuildConfig.VERSION_NAME}")
             .setConnectTimeoutMs(20_000)
             .setReadTimeoutMs(30_000)
-            .setAllowCrossProtocolRedirects(true)
+            .setTransferListener(counter)
         val p = ExoPlayer.Builder(this)
             .setMediaSourceFactory(DefaultMediaSourceFactory(http))
             .setSeekBackIncrementMs(10_000)
@@ -66,6 +84,7 @@ class PlayerActivity : AppCompatActivity() {
         player?.let { position = it.currentPosition; it.release() }
         player = null
         view.player = null
+        lifecycleScope.launch { Usage.report(applicationContext) }
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -73,11 +92,6 @@ class PlayerActivity : AppCompatActivity() {
         outState.putLong("pos", player?.currentPosition ?: position)
     }
 
-    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
-        // Let the remote's OK / arrows open the on-screen controls first.
-        return view.dispatchKeyEvent(event) || super.dispatchKeyEvent(event)
-    }
-
-    @Suppress("unused")
-    private fun hide(v: View) { v.visibility = View.GONE }
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean =
+        view.dispatchKeyEvent(event) || super.dispatchKeyEvent(event)
 }

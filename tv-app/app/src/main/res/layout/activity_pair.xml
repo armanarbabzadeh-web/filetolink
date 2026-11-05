@@ -2,75 +2,158 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:gravity="center"
+    android:gravity="center_vertical"
     android:layoutDirection="rtl"
     android:orientation="horizontal"
-    android:padding="48dp">
+    android:paddingStart="64dp"
+    android:paddingEnd="64dp">
 
     <LinearLayout
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_weight="1"
         android:orientation="vertical"
-        android:paddingEnd="48dp">
+        android:paddingEnd="40dp">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <ImageView
+                android:layout_width="72dp"
+                android:layout_height="72dp"
+                android:src="@drawable/logo" />
+
+            <TextView
+                android:id="@+id/brand"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="16dp"
+                android:textSize="30sp"
+                android:textStyle="bold" />
+        </LinearLayout>
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:layout_marginTop="28dp"
             android:text="@string/pair_title"
-            android:textSize="30sp"
+            android:textSize="34sp"
             android:textStyle="bold" />
 
-        <TextView
-            android:layout_width="wrap_content"
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="24dp"
-            android:text="@string/pair_step1"
-            android:textColor="@color/text_dim"
-            android:textSize="18sp" />
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
 
-        <TextView
-            android:id="@+id/botName"
-            android:layout_width="wrap_content"
+            <TextView
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:background="@drawable/step_circle"
+                android:gravity="center"
+                android:text="۱"
+                android:textSize="20sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="14dp"
+                android:layout_weight="1"
+                android:text="@string/pair_step1"
+                android:textColor="@color/text_dim"
+                android:textSize="19sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:textColor="@color/text_dim"
-            android:textSize="18sp" />
+            android:layout_marginTop="18dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:background="@drawable/step_circle"
+                android:gravity="center"
+                android:text="۲"
+                android:textSize="20sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/step2"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="14dp"
+                android:layout_weight="1"
+                android:textColor="@color/text_dim"
+                android:textSize="19sp" />
+        </LinearLayout>
 
         <TextView
             android:id="@+id/code"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="24dp"
+            android:layout_marginStart="54dp"
+            android:layout_marginTop="18dp"
+            android:background="@drawable/code_box"
             android:fontFamily="monospace"
-            android:letterSpacing="0.15"
-            android:text="··· ···"
+            android:letterSpacing="0.12"
+            android:paddingStart="28dp"
+            android:paddingTop="10dp"
+            android:paddingEnd="28dp"
+            android:paddingBottom="10dp"
+            android:text="···· ····"
             android:textColor="@color/accent"
             android:textDirection="ltr"
-            android:textSize="64sp"
+            android:textSize="54sp"
             android:textStyle="bold" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:text="@string/pair_note"
-            android:textColor="@color/text_dim"
-            android:textSize="14sp" />
 
         <TextView
             android:id="@+id/status"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:textColor="#FFB74D"
+            android:layout_marginTop="22dp"
+            android:drawableStart="@drawable/ic_send"
+            android:drawablePadding="10dp"
+            android:gravity="center_vertical"
+            android:text="@string/pair_wait"
+            android:textColor="@color/text_dim"
+            android:textSize="17sp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/pair_note"
+            android:textColor="@color/text_dim"
             android:textSize="15sp" />
     </LinearLayout>
 
-    <ImageView
-        android:id="@+id/qr"
-        android:layout_width="300dp"
-        android:layout_height="300dp"
-        android:background="#FFFFFF"
-        android:padding="8dp" />
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:gravity="center_horizontal"
+        android:orientation="vertical">
+
+        <ImageView
+            android:id="@+id/qr"
+            android:layout_width="320dp"
+            android:layout_height="320dp"
+            android:background="@drawable/qr_card"
+            android:padding="18dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:text="@string/scan"
+            android:textColor="@color/text_dim"
+            android:textSize="17sp" />
+    </LinearLayout>
 </LinearLayout>

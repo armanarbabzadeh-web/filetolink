@@ -1,8 +1,8 @@
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:state_focused="true">
-        <shape><solid android:color="@color/card_focus" /><stroke android:width="3dp" android:color="@color/accent" /><corners android:radius="10dp" /></shape>
+        <shape><solid android:color="@color/surface_focus" /><stroke android:width="4dp" android:color="@color/accent" /><corners android:radius="18dp" /></shape>
     </item>
     <item>
-        <shape><solid android:color="@color/card" /><corners android:radius="10dp" /></shape>
+        <shape><solid android:color="@color/surface" /><corners android:radius="18dp" /></shape>
     </item>
 </selector>

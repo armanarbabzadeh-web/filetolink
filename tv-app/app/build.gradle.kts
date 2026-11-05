@@ -16,17 +16,17 @@ fun envValue(key: String): String {
 }
 
 android {
-    namespace = "com.filetolink.tv"
+    namespace = "com.teletvshare.tv"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.filetolink.tv"
+        applicationId = "com.teletvshare.tv"
         minSdk = 21
         targetSdk = 35
-        versionCode = 2
-        versionName = "2.0"
-        buildConfigField("String", "BASE_URL", "\"${envValue("WORKER_URL")}\"")
-        buildConfigField("String", "BOT_USERNAME", "\"AazFiletolinkbot\"")
+        versionCode = 3
+        versionName = "3.0"
+        buildConfigField("String", "ARVAN_URL", "\"https://teletvshare-files.s3.ir-central1.arvanstorage.ir\"")
+        buildConfigField("String", "BOT_USERNAME", "\"TeleTVShare_bot\"")
     }
 
     buildFeatures { buildConfig = true }
