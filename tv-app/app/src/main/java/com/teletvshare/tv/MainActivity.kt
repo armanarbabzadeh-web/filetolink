@@ -33,6 +33,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        android.util.Log.i("TeleTVShare", "main onCreate manifest=${Prefs.manifest(this) != null}")
         manifestUrl = Prefs.manifest(this) ?: return unlinked(null)
         setContentView(R.layout.activity_main)
         findViewById<TextView>(R.id.brand).text = PairActivity.brand(this)
@@ -61,6 +62,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        android.util.Log.i("TeleTVShare", "main onResume url=${manifestUrl.isNotEmpty()}")
         if (manifestUrl.isEmpty()) return
         pollJob = lifecycleScope.launch {
             while (isActive) {

@@ -58,5 +58,5 @@ shot 7-header-focus 2
 echo "=== CRASH BUFFER ==="
 adb logcat -d -b crash | head -80
 echo "=== APP LOG ==="
-adb logcat -d -s TeleTVShare | head -40
+adb logcat -d ActivityTaskManager:I ActivityManager:I TeleTVShare:V AndroidRuntime:E System.err:W *:S | grep -iE "teletvshare|FATAL|Exception|at com" | head -60
 exit 0
