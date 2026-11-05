@@ -99,8 +99,8 @@ class MainActivity : AppCompatActivity() {
             Prefs.setReportUrl(this, m.reportUrl)
             blocked = m.blocked
             warn.visibility = if (blocked) View.VISIBLE else View.GONE
-            val quota = m.quota?.let { " / ${Fmt.size(it)}" } ?: ""
-            userChip.text = "${m.userName}  •  ${m.plan}  •  " + Fmt.fa("${Fmt.size(m.used)}$quota")
+            val quota = m.quota?.let { " از ${Fmt.faSize(it)}" } ?: ""
+            userChip.text = "${m.userName}   ${Fmt.faSize(m.used)}$quota"
             val ids = m.files.map { it.id }.toSet()
             val prev = known
             if (prev != null) {
@@ -143,16 +143,16 @@ class MainActivity : AppCompatActivity() {
                         .putExtra("index", images.indexOfFirst { it.id == f.id }.coerceAtLeast(0))
                 )
             }
-            else -> AlertDialog.Builder(this)
-                .setTitle(f.name)
-                .setMessage(Fmt.fa(Fmt.size(f.size)) + "\n\n" + getString(R.string.file_info))
+            else -> AlertDialog.Builder(this, R.style.AppDialog)
+                .setTitle(Fmt.title(f.name))
+                .setMessage(Fmt.faSize(f.size) + "\n\n" + getString(R.string.file_info))
                 .setPositiveButton(android.R.string.ok, null)
                 .show()
         }
     }
 
     private fun confirmLogout() {
-        AlertDialog.Builder(this)
+        AlertDialog.Builder(this, R.style.AppDialog)
             .setTitle(R.string.logout_q)
             .setMessage(R.string.logout_msg)
             .setPositiveButton(R.string.yes_logout) { _, _ ->

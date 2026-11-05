@@ -1,0 +1,7 @@
+<inset xmlns:android="http://schemas.android.com/apk/res/android" android:inset="16dp">
+    <shape>
+        <solid android:color="@color/surface" />
+        <stroke android:width="2dp" android:color="#5538D6F5" />
+        <corners android:radius="24dp" />
+    </shape>
+</inset>

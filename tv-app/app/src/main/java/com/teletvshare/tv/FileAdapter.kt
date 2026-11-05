@@ -36,9 +36,9 @@ class FileAdapter(private val onOpen: (FileItem) -> Unit) : RecyclerView.Adapter
         private val duration: TextView = v.findViewById(R.id.duration)
 
         fun bind(f: FileItem) {
-            name.text = f.name
-            meta.text = Fmt.fa("${Fmt.size(f.size)}  •  ") + Fmt.date(f.createdAt)
-            val d = Fmt.duration(f.duration)
+            name.text = Fmt.title(f.name)
+            meta.text = "${Fmt.faSize(f.size)}  •  ${Fmt.date(f.createdAt)}"
+            val d = Fmt.fa(Fmt.duration(f.duration))
             duration.text = d
             duration.visibility = if (d.isEmpty()) View.GONE else View.VISIBLE
             val icon = when (f.kind) {

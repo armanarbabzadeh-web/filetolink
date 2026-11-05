@@ -45,7 +45,7 @@ class PlayerActivity : AppCompatActivity() {
         view.keepScreenOn = true
         position = savedInstanceState?.getLong("pos") ?: 0L
         val title = findViewById<TextView>(R.id.title)
-        title.text = intent.getStringExtra("title")
+        title.text = Fmt.title(intent.getStringExtra("title") ?: "")
         if (intent.getBooleanExtra("audio", false)) {
             findViewById<View>(R.id.audioArt).visibility = View.VISIBLE
             view.controllerShowTimeoutMs = 0

@@ -35,7 +35,7 @@ class ImageActivity : AppCompatActivity() {
     private fun show() {
         if (urls.isEmpty()) return finish()
         index = index.coerceIn(0, urls.size - 1)
-        caption.text = "${names.getOrNull(index) ?: ""}    " + Fmt.fa("${index + 1} / ${urls.size}") + "    ◀ ▶"
+        caption.text = "${Fmt.title(names.getOrNull(index) ?: "")}    " + Fmt.fa("${index + 1} از ${urls.size}")
         progress.visibility = View.VISIBLE
         Usage.add(this, sizes.getOrElse(index) { 0L })
         image.load(urls[index]) {

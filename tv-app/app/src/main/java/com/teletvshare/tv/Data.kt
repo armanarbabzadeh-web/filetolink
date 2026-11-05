@@ -176,6 +176,19 @@ object Fmt {
         return fa(String.format(Locale.US, "%04d/%02d/%02d", y, m, d))
     }
 
+    /** Size in Persian, e.g. «۴۰ مگابایت». */
+    fun faSize(n: Long): String = when {
+        n < 1_000_000 -> fa(String.format(Locale.US, "%.0f", n / 1e3)) + " کیلوبایت"
+        n < 1_000_000_000 -> fa(String.format(Locale.US, if (n < 10e6) "%.1f" else "%.0f", n / 1e6)) + " مگابایت"
+        else -> fa(String.format(Locale.US, if (n < 10e9) "%.1f" else "%.0f", n / 1e9)).replace(".", "٫") + " گیگابایت"
+    }.replace(".", "٫")
+
+    /** File name without its extension (the icon already shows the type). */
+    fun title(name: String): String {
+        val i = name.lastIndexOf('.')
+        return if (i in 1 until name.length - 1 && name.length - i <= 6) name.substring(0, i) else name
+    }
+
     fun fa(s: String) = s.map { if (it in '0'..'9') '۰' + (it - '0') else it }.joinToString("")
 
     private fun toJalali(gy: Int, gm: Int, gd: Int): Triple<Int, Int, Int> {
