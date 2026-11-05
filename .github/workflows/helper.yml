@@ -36,4 +36,9 @@ jobs:
           BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           HELPER_SECRET: ${{ secrets.HELPER_SECRET }}
           WORKER_URL: ${{ secrets.WORKER_URL }}
-        run: python main.py --once
+          ARVAN_ENDPOINT: https://s3.ir-central1.arvanstorage.ir
+          ARVAN_REGION: ir-central1
+          ARVAN_BUCKET: teletvshare-files
+          ARVAN_ACCESS_KEY: ${{ secrets.ARVAN_ACCESS_KEY }}
+          ARVAN_SECRET_KEY: ${{ secrets.ARVAN_SECRET_KEY }}
+        run: python main.py

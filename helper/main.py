@@ -1,16 +1,12 @@
-"""Large-file helper for the File-to-Link bot.
+"""TeleTVShare large-file helper (runs on GitHub Actions).
 
-Telegram's Bot API can't download files over 20 MB, so this small service logs in
-as the same bot over MTProto (Pyrogram), streams such files from Telegram and
-uploads them to the Cloudflare Worker in parts (Cloudflare's free plan caps each
-request body at 100 MB).
-
-Flow: the Worker POSTs /wake -> we fetch /helper/jobs from the Worker -> for each
-job we stream the file and PUT it to /helper/upload/<id>?offset=N, reporting
-progress, then POST /helper/finish/<id> (or /helper/fail/<id>).
+Telegram's Bot API can't download files over 20 MB, so this logs in as the main bot over
+MTProto (Pyrogram), streams each queued file from Telegram and uploads it straight to the
+ArvanCloud bucket as an S3 multipart upload. The Worker is told about progress and the result.
 
 Env: API_ID, API_HASH, BOT_TOKEN, WORKER_URL, HELPER_SECRET,
-     PORT (Render sets it), RENDER_EXTERNAL_URL (Render sets it), PROXY (local testing).
+     ARVAN_ENDPOINT, ARVAN_REGION, ARVAN_BUCKET, ARVAN_ACCESS_KEY, ARVAN_SECRET_KEY,
+     PROXY (optional, local testing only, e.g. socks5://127.0.0.1:10808)
 """
 
 import asyncio
@@ -19,27 +15,32 @@ import os
 import time
 from urllib.parse import urlparse
 
-from aiohttp import ClientSession, ClientTimeout, web
+import boto3
+from aiohttp import ClientSession, ClientTimeout
+from botocore.config import Config
 from pyrogram import Client
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("helper")
 logging.getLogger("pyrogram").setLevel(logging.WARNING)
 
-API_ID = int(os.environ["API_ID"])
-API_HASH = os.environ["API_HASH"]
-BOT_TOKEN = os.environ["BOT_TOKEN"]
 WORKER_URL = os.environ["WORKER_URL"].rstrip("/")
-SECRET = os.environ["HELPER_SECRET"]
-PORT = int(os.environ.get("PORT", "10000"))
-SELF_URL = os.environ.get("RENDER_EXTERNAL_URL", "").rstrip("/")
-PART_CHUNKS = 20  # each PUT = 20 storage chunks (~38 MB)
+AUTH = {"Authorization": f"Bearer {os.environ['HELPER_SECRET']}", "User-Agent": "TeleTVShareHelper/2.0"}
+BUCKET = os.environ["ARVAN_BUCKET"]
+PART = 16 * 1024 * 1024  # S3 multipart part size
 
-AUTH = {"Authorization": f"Bearer {SECRET}"}
+s3 = boto3.client(
+    "s3",
+    endpoint_url=os.environ["ARVAN_ENDPOINT"],
+    region_name=os.environ["ARVAN_REGION"],
+    aws_access_key_id=os.environ["ARVAN_ACCESS_KEY"],
+    aws_secret_access_key=os.environ["ARVAN_SECRET_KEY"],
+    config=Config(s3={"addressing_style": "path"}, signature_version="s3v4", retries={"max_attempts": 5}),
+)
 
 
 def proxy_settings():
-    raw = os.environ.get("PROXY")  # e.g. socks5://127.0.0.1:10808 for local testing
+    raw = os.environ.get("PROXY")
     if not raw:
         return None
     u = urlparse(raw)
@@ -47,22 +48,13 @@ def proxy_settings():
 
 
 tg = Client(
-    "helper",
-    api_id=API_ID,
-    api_hash=API_HASH,
-    bot_token=BOT_TOKEN,
-    in_memory=True,
-    no_updates=True,
-    proxy=proxy_settings(),
+    "helper", api_id=int(os.environ["API_ID"]), api_hash=os.environ["API_HASH"],
+    bot_token=os.environ["BOT_TOKEN"], in_memory=True, no_updates=True, proxy=proxy_settings(),
 )
-
-wake = asyncio.Event()
-busy = False
 http: ClientSession | None = None
 
 
 async def call(method, path, *, data=None, json=None, tries=4):
-    """Request to the Worker with retries. Returns parsed JSON (or text)."""
     last = None
     for attempt in range(tries):
         try:
@@ -78,115 +70,63 @@ async def call(method, path, *, data=None, json=None, tries=4):
                     return body
         except PermissionError:
             raise
-        except Exception as e:  # network / 5xx: retry with backoff
+        except Exception as e:
             last = e
             log.warning("retry %d %s %s: %s", attempt + 1, method, path, e)
             await asyncio.sleep(2 * (attempt + 1))
     raise last
 
 
-async def process(job, chunk):
-    jid, name, size = job["id"], job["name"], job["size"]
-    part = chunk * PART_CHUNKS
-    log.info("job %s: %s (%d bytes)", jid, name, size)
-    buf = bytearray()
-    offset = done = 0
-    last_report = 0.0
-    started = time.time()
+async def process(job):
+    jid, key, size = job["id"], job["obj_key"], job["size"]
+    log.info("job %s: %s (%d bytes)", jid, job["name"], size)
+    loop = asyncio.get_running_loop()
+    mp = await loop.run_in_executor(None, lambda: s3.create_multipart_upload(
+        Bucket=BUCKET, Key=key, ACL="public-read",
+        ContentType=job.get("mime") or "application/octet-stream",
+        ContentDisposition=job.get("disposition") or "inline",
+    ))
+    upload_id = mp["UploadId"]
+    parts, buf, done, last_report, started = [], bytearray(), 0, 0.0, time.time()
+
+    async def flush(data):
+        n = len(parts) + 1
+        res = await loop.run_in_executor(None, lambda: s3.upload_part(
+            Bucket=BUCKET, Key=key, UploadId=upload_id, PartNumber=n, Body=data))
+        parts.append({"PartNumber": n, "ETag": res["ETag"]})
+
     try:
         async for piece in tg.stream_media(job["tg_file_id"]):
             buf += piece
             done += len(piece)
-            while len(buf) >= part:
-                await call("PUT", f"/helper/upload/{jid}?offset={offset}", data=bytes(buf[:part]))
-                del buf[:part]
-                offset += part
+            if len(buf) >= PART:
+                await flush(bytes(buf))
+                buf.clear()
             if time.time() - last_report > 10:
                 last_report = time.time()
                 speed = done / max(1.0, time.time() - started)
-                await call("POST", f"/helper/progress/{jid}", json={"done": done, "total": size, "speed": int(speed)}, tries=1)
-        if buf or offset == 0:
-            await call("PUT", f"/helper/upload/{jid}?offset={offset}", data=bytes(buf))
+                try:
+                    await call("POST", f"/helper/progress/{jid}", json={"done": done, "total": size, "speed": int(speed)}, tries=1)
+                except PermissionError:
+                    raise RuntimeError("cancelled by user")
+        if buf or not parts:
+            await flush(bytes(buf))
+        await loop.run_in_executor(None, lambda: s3.complete_multipart_upload(
+            Bucket=BUCKET, Key=key, UploadId=upload_id, MultipartUpload={"Parts": parts}))
         res = await call("POST", f"/helper/finish/{jid}")
         log.info("job %s done in %.0fs: %s", jid, time.time() - started, res)
     except Exception as e:
         log.exception("job %s failed", jid)
+        await loop.run_in_executor(None, lambda: s3.abort_multipart_upload(Bucket=BUCKET, Key=key, UploadId=upload_id))
         try:
             await call("POST", f"/helper/fail/{jid}", data=f"{type(e).__name__}: {e}"[:400], tries=2)
         except Exception:
-            log.exception("could not report failure")
-
-
-async def job_loop():
-    global busy
-    while True:
-        await wake.wait()
-        wake.clear()
-        busy = True
-        try:
-            data = await call("GET", "/helper/jobs")
-            for job in data.get("jobs", []):
-                await process(job, data["chunk"])
-        except Exception:
-            log.exception("job loop error")
-        finally:
-            busy = False
-
-
-async def keep_awake():
-    # Render's free plan sleeps after 15 minutes without inbound requests,
-    # so ping ourselves while a long transfer is running.
-    while True:
-        await asyncio.sleep(240)
-        if busy and SELF_URL:
-            try:
-                async with http.get(SELF_URL + "/health") as r:
-                    await r.read()
-            except Exception as e:
-                log.warning("self-ping failed: %s", e)
-
-
-async def handle_wake(request):
-    if request.headers.get("Authorization") != f"Bearer {SECRET}":
-        return web.Response(status=401, text="unauthorized")
-    wake.set()
-    return web.json_response({"ok": True, "busy": busy})
-
-
-async def handle_health(_):
-    return web.json_response({"ok": True, "busy": busy})
-
-
-async def main():
-    global http
-    # Cloudflare rejects default Python user agents, so send our own.
-    http = ClientSession(
-        timeout=ClientTimeout(total=None, sock_connect=30, sock_read=300),
-        headers={"User-Agent": "FileToLinkHelper/1.0"},
-    )
-
-    app = web.Application()
-    app.add_routes([web.get("/", handle_health), web.get("/health", handle_health), web.post("/wake", handle_wake)])
-    runner = web.AppRunner(app)
-    await runner.setup()
-    await web.TCPSite(runner, "0.0.0.0", PORT).start()
-    log.info("listening on :%d", PORT)
-
-    await tg.start()
-    me = await tg.get_me()
-    log.info("logged in as @%s", me.username)
-
-    wake.set()  # process anything queued while we were asleep
-    await asyncio.gather(job_loop(), keep_awake())
+            log.warning("could not report failure (job may have been cancelled)")
 
 
 async def run_once():
-    """GitHub Actions mode: move every queued large file, then exit."""
     global http
-    http = ClientSession(
-        timeout=ClientTimeout(total=None, sock_connect=30, sock_read=300),
-        headers={"User-Agent": "FileToLinkHelper/1.0"},
-    )
+    http = ClientSession(timeout=ClientTimeout(total=None, sock_connect=30, sock_read=300))
     await tg.start()
     log.info("logged in as @%s", (await tg.get_me()).username)
     tried = set()
@@ -198,7 +138,7 @@ async def run_once():
                 break
             for job in jobs:
                 tried.add(job["id"])
-                await process(job, data["chunk"])
+                await process(job)
     finally:
         await tg.stop()
         await http.close()
@@ -206,6 +146,4 @@ async def run_once():
 
 
 if __name__ == "__main__":
-    import sys
-
-    asyncio.run(run_once() if "--once" in sys.argv else main())
+    asyncio.run(run_once())

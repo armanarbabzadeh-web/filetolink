@@ -8,10 +8,14 @@ workers_dev = true
 OWNER_ID = "254587583"
 PUBLIC_URL = "https://filetolink.arman-arbabzadeh.workers.dev"
 GITHUB_REPO = "armanarbabzadeh-web/filetolink"
-BOT_USERNAME = "AazFiletolinkbot"
+BOT_USERNAME = "TeleTVShare_bot"
 CARD_NUMBER = "6219861061353297"
 CARD_NAME = "آرمان ارباب‌زاده"
 CARD_BANK = "بانک سامان"
+ARVAN_BUCKET = "teletvshare-files"
+ARVAN_ENDPOINT = "https://s3.ir-central1.arvanstorage.ir"
+ARVAN_REGION = "ir-central1"
+ARVAN_PUBLIC_URL = "https://teletvshare-files.s3.ir-central1.arvanstorage.ir"
 
 
 [[durable_objects.bindings]]
