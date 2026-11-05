@@ -22,13 +22,13 @@ const MANIFEST_REFRESH = 3 * DAY;     // presigned report URL lives 7 days
 const WELCOME = { plan: 'p500', days: 7 };
 
 const PLANS = {
-  free: { title: 'رایگان', quota: 100e6, price: 0, fw: 3 },
-  p500: { title: '۵۰۰ مگابایت (هدیه عضویت)', quota: 500e6, price: 0, fw: 3 }, // welcome gift only
+  free: { title: 'رایگان', quota: 100e6, price: 0, fw: 4 },
+  p500: { title: '۵۰۰ مگابایت (هدیه عضویت)', quota: 500e6, price: 0, fw: 4 }, // welcome gift only
   // fw = fair-use monthly viewing as a multiple of the plan's storage (not shown to users)
-  p1g: { title: '۱ گیگابایت', quota: 1e9, price: 12_900, fw: 3 },
-  p5g: { title: '۵ گیگابایت', quota: 5e9, price: 49_900, fw: 3 },
-  p20g: { title: '۲۰ گیگابایت', quota: 20e9, price: 149_000, fw: 2, badge: '⭐ محبوب‌ترین' },
-  p50g: { title: '۵۰ گیگابایت', quota: 50e9, price: 299_000, fw: 1, badge: '💎 به‌صرفه‌ترین' },
+  p1g: { title: '۱ گیگابایت', quota: 1e9, price: 12_900, fw: 4 },
+  p5g: { title: '۵ گیگابایت', quota: 5e9, price: 49_900, fw: 4 },
+  p20g: { title: '۲۰ گیگابایت', quota: 20e9, price: 179_000, fw: 4, badge: '⭐ محبوب‌ترین' },
+  p50g: { title: '۵۰ گیگابایت', quota: 50e9, price: 439_000, fw: 4, badge: '💎 به‌صرفه‌ترین' },
 };
 const PLAN_ORDER = ['free', 'p500', 'p1g', 'p5g', 'p20g', 'p50g']; // for upgrade/downgrade checks
 const SALE = ['p1g', 'p5g', 'p20g', 'p50g'];
