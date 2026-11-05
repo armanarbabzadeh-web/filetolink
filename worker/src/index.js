@@ -25,10 +25,10 @@ const PLANS = {
   free: { title: 'رایگان', quota: 100e6, price: 0, fw: 4 },
   p500: { title: '۵۰۰ مگابایت (هدیه عضویت)', quota: 500e6, price: 0, fw: 4 }, // welcome gift only
   // fw = fair-use monthly viewing as a multiple of the plan's storage (not shown to users)
-  p1g: { title: '۱ گیگابایت', quota: 1e9, price: 9_900, fw: 4, util: 0.7 },
-  p5g: { title: '۵ گیگابایت', quota: 5e9, price: 34_900, fw: 4, util: 0.6 },
-  p20g: { title: '۲۰ گیگابایت', quota: 20e9, price: 99_000, fw: 4, util: 0.5, badge: '⭐ محبوب‌ترین' },
-  p50g: { title: '۵۰ گیگابایت', quota: 50e9, price: 199_000, fw: 4, util: 0.4, badge: '💎 به‌صرفه‌ترین' },
+  p1g: { title: '۱ گیگابایت', quota: 1e9, price: 19_900, fw: 4, util: 0.7 },
+  p5g: { title: '۵ گیگابایت', quota: 5e9, price: 69_900, fw: 4, util: 0.6 },
+  p20g: { title: '۲۰ گیگابایت', quota: 20e9, price: 199_000, fw: 4, util: 0.5, badge: '⭐ محبوب‌ترین' },
+  p50g: { title: '۵۰ گیگابایت', quota: 50e9, price: 399_000, fw: 4, util: 0.4, badge: '💎 به‌صرفه‌ترین' },
 };
 const PLAN_ORDER = ['free', 'p500', 'p1g', 'p5g', 'p20g', 'p50g']; // for upgrade/downgrade checks
 const SALE = ['p1g', 'p5g', 'p20g', 'p50g'];
