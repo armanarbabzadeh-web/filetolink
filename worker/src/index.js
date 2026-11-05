@@ -859,6 +859,9 @@ export class Store extends DurableObject {
     let url;
     try { url = new URL(raw); } catch { return this.send(m.chat.id, '❌ این لینک معتبر نیست.', null, m.message_id); }
     if (!/^https?:$/.test(url.protocol)) return this.send(m.chat.id, '❌ این لینک معتبر نیست.', null, m.message_id);
+    if (/(^|\.)(youtube\.com|youtu\.be|youtube-nocookie\.com)$/i.test(url.hostname)) {
+      return this.send(m.chat.id, '⚠️ دانلود از یوتیوب فعلاً پشتیبانی نمی‌شود. می‌توانید خود فایل ویدیو را در تلگرام بفرستید.', null, m.message_id);
+    }
     if (this.blockedSite(url.hostname)) {
       return this.send(m.chat.id, '⛔️ دانلود از این سایت پشتیبانی نمی‌شود.', null, m.message_id);
     }
@@ -939,7 +942,7 @@ export class Store extends DurableObject {
       '',
       '<b>۴. دانلود از سایت‌های ویدیو 🔗</b>',
       'کافی است لینک ویدیو را بفرستید؛ کیفیت‌های موجود با حجمشان نمایش داده می‌شود، یکی را انتخاب کنید تا دانلود شود و روی تلویزیون بدون VPN ببینید.',
-      'سایت‌های پشتیبانی‌شده: یوتیوب، آپارات، اینستاگرام، تیک‌تاک، ایکس (توییتر)، فیسبوک، ویمئو، دیلی‌موشن، توییچ، ردیت، ساندکلاد و بسیاری از سایت‌های عمومی ویدیو.',
+      'برای بسیاری از سایت‌های عمومی ویدیو و لینک‌های مستقیم فایل کار می‌کند (دانلود از یوتیوب فعلاً پشتیبانی نمی‌شود).',
       '',
       '<b>۵. مدیریت فایل‌ها</b>',
       'از «📂 فایل‌های من» فایل‌ها را ببینید و پاک کنید. با پاک کردن، از تلویزیون هم حذف می‌شوند.',
