@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: filetolink-helper
+    runtime: python
+    plan: free
+    rootDir: helper
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: WORKER_URL
+        value: https://filetolink.arman-arbabzadeh.workers.dev
+      - key: API_ID
+        sync: false
+      - key: API_HASH
+        sync: false
+      - key: BOT_TOKEN
+        sync: false
+      - key: HELPER_SECRET
+        sync: false

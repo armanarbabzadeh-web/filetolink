@@ -221,6 +221,7 @@ export class Store extends DurableObject {
       if (p === '/helper/jobs') return this.helperJobs();
       if ((m = /^\/helper\/upload\/([A-Za-z0-9]{16})$/.exec(p))) return this.helperUpload(req, m[1], url);
       if ((m = /^\/helper\/(finish|fail)\/([A-Za-z0-9]{16})$/.exec(p))) return this.helperDone(req, m[1], m[2]);
+      if ((m = /^\/helper\/progress\/([A-Za-z0-9]{16})$/.exec(p))) return this.helperProgress(req, m[1]);
       return new Response('Not found', { status: 404 });
     } catch (e) {
       console.log('error', p, e.stack || e);
@@ -581,6 +582,18 @@ export class Store extends DurableObject {
     this.sql.exec(`UPDATE files SET status='helper_uploading' WHERE id=?`, id);
     const n = await this.writeStream(id, req.body, offset / CHUNK);
     return Response.json({ ok: true, written: n });
+  }
+
+  async helperProgress(req, id) {
+    const f = this.one(`SELECT * FROM files WHERE id=? AND status IN ('waiting_helper','helper_uploading')`, id);
+    if (!f) return new Response('no such job', { status: 404 });
+    const { done = 0, total = f.size, speed = 0 } = await req.json().catch(() => ({}));
+    const pct = total ? Math.min(100, Math.floor((done / total) * 100)) : 0;
+    const bar = '█'.repeat(Math.round(pct / 10)) + '░'.repeat(10 - Math.round(pct / 10));
+    await this.edit(f.chat_id, f.msg_id,
+      `⏳ <b>${esc(f.name)}</b> (${fmtSize(f.size)})\nدر حال انتقال فایل بزرگ…\n${bar} ${pct}%\n${fmtSize(done)} از ${fmtSize(total)}${speed ? ` · ${fmtSize(speed)}/s` : ''}`,
+      [[{ text: '❌ لغو', callback_data: `c:${id}` }]]);
+    return Response.json({ ok: true });
   }
 
   async helperDone(req, kind, id) {
