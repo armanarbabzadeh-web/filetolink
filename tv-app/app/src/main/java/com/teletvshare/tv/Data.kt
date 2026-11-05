@@ -12,6 +12,7 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
+import kotlin.math.roundToLong
 
 /**
  * The TV talks only to ArvanCloud (reachable in Iran without VPN):
@@ -178,10 +179,10 @@ object Fmt {
 
     /** Size in Persian, e.g. «۴۰ مگابایت». */
     fun faSize(n: Long): String = when {
-        n < 1_000_000 -> fa(String.format(Locale.US, "%.0f", n / 1e3)) + " کیلوبایت"
-        n < 1_000_000_000 -> fa(String.format(Locale.US, if (n < 10e6) "%.1f" else "%.0f", n / 1e6)) + " مگابایت"
-        else -> fa(String.format(Locale.US, if (n < 10e9) "%.1f" else "%.0f", n / 1e9)).replace(".", "٫") + " گیگابایت"
-    }.replace(".", "٫")
+        n < 1_000_000 -> fa(maxOf(1, (n / 1000.0).roundToLong()).toString()) + " کیلوبایت"
+        n < 1_000_000_000 -> fa((n / 1e6).roundToLong().toString()) + " مگابایت"
+        else -> fa(String.format(Locale.US, "%.1f", n / 1e9)).replace(".", "٫") + " گیگابایت"
+    }
 
     /** File name without its extension (the icon already shows the type). */
     fun title(name: String): String {

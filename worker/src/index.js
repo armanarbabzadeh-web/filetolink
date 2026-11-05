@@ -41,8 +41,12 @@ const PERIODS = [1, 3, 6, 12];                                      // months
 const PERIOD_TITLE = { 1: 'یک ماهه', 3: 'سه ماهه', 6: 'شش ماهه', 12: 'یک ساله' };                        // plans that can be bought or gifted
 const PLAN_ALIAS = { '1': 'p1g', '1g': 'p1g', p1g: 'p1g', '5': 'p5g', '5g': 'p5g', p5g: 'p5g',
   '20': 'p20g', '20g': 'p20g', p20g: 'p20g', '50': 'p50g', '50g': 'p50g', p50g: 'p50g' };
-const ACTIVE = `('ready','uploading','queued','waiting_helper','helper_uploading')`;
+const ACTIVE = `('ready','uploading','queued','waiting_helper','helper_uploading','link_download')`;
 const CODE_ABC = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+// Adult sites are refused: such content is illegal in Iran and would get the Arvan account closed.
+const BLOCKED_SITES = ['pornhub.com', 'xvideos.com', 'xnxx.com', 'xhamster.com', 'redtube.com', 'youporn.com', 'tube8.com',
+  'spankbang.com', 'eporner.com', 'bdsmvilla.com', 'femdomtube.com', 'beeg.com', 'txxx.com', 'hqporner.com', 'porntrex.com',
+  'motherless.com', 'thumbzilla.com', 'onlyfans.com', 'chaturbate.com', 'stripchat.com', 'xxx'];
 
 // ---------------------------------------------------------------- helpers
 const enc = new TextEncoder();
@@ -189,7 +193,7 @@ export class Store extends DurableObject {
       CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
       CREATE TABLE IF NOT EXISTS support(admin_msg_id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, created_at INTEGER);
     `);
-    this.addCols('files', { owner: 'INTEGER', storage: "TEXT NOT NULL DEFAULT 'do'", obj_key: 'TEXT', thumb_key: 'TEXT' });
+    this.addCols('files', { owner: 'INTEGER', storage: "TEXT NOT NULL DEFAULT 'do'", obj_key: 'TEXT', thumb_key: 'TEXT', source_url: 'TEXT', formats: 'TEXT', fmt: 'TEXT' });
     this.addCols('users', {
       up_month: 'TEXT', up_used: 'INTEGER NOT NULL DEFAULT 0',
       watch_month: 'TEXT', watch_used: 'INTEGER NOT NULL DEFAULT 0', watch_warned: 'INTEGER NOT NULL DEFAULT 0',
@@ -443,6 +447,7 @@ export class Store extends DurableObject {
         if (p === '/helper/jobs') return this.helperJobs();
         if ((m = /^\/helper\/(finish|fail)\/([A-Za-z0-9]{16})$/.exec(p))) return this.helperDone(req, m[1], m[2]);
         if ((m = /^\/helper\/progress\/([A-Za-z0-9]{16})$/.exec(p))) return this.helperProgress(req, m[1]);
+        if ((m = /^\/helper\/formats\/([A-Za-z0-9]{16})$/.exec(p))) return this.helperFormats(req, m[1]);
       }
       return new Response('Not found', { status: 404 });
     } catch (e) {
@@ -479,6 +484,8 @@ export class Store extends DurableObject {
     if (user.state === 'tv' && text) { this.setState(user.id, null); return this.linkTv(m.chat.id, user, text); }
 
     const media = extractMedia(m);
+    const link = !media && (text.match(/https?:\/\/\S+/) || [])[0];
+    if (link) { if (user.state) this.setState(user.id, null); return this.addLink(m, user, link); }
     if (!media) return this.sendMenu(m.chat.id, user);
     if (user.state) this.setState(user.id, null);
     return this.addFile(m, user, media);
@@ -503,7 +510,8 @@ export class Store extends DurableObject {
     }
     if (name === 'tv') return arg ? this.linkTv(chat, user, arg) : this.sendTvStatus(chat, user);
     if (name === 'app' || name === 'install') return this.sendApp(chat);
-    if (name === 'support' || name === 'help') return this.supportStart(chat, user);
+    if (name === 'support') return this.supportStart(chat, user);
+    if (name === 'help' || name === 'guide') return this.sendTutorial(chat);
     return this.sendMenu(chat, user);
   }
 
@@ -512,7 +520,8 @@ export class Store extends DurableObject {
       [{ text: '📦 خرید یا تمدید اشتراک', callback_data: 'b' }],
       [{ text: '📂 فایل‌های من', callback_data: 'l:0' }, { text: '👤 حساب من', callback_data: 'a' }],
       [{ text: '🎁 کد هدیه', callback_data: 'g' }, { text: '📺 تلویزیون', callback_data: 't' }],
-      [{ text: '📲 دریافت اپ تلویزیون', callback_data: 'app' }, { text: '💬 پشتیبانی', callback_data: 'sup' }],
+      [{ text: '📲 دریافت اپ تلویزیون', callback_data: 'app' }, { text: '📖 آموزش', callback_data: 'help' }],
+      [{ text: '💬 پشتیبانی', callback_data: 'sup' }],
     ];
   }
 
@@ -838,6 +847,117 @@ export class Store extends DurableObject {
     return true;
   }
 
+  // ================================================================ downloads from links (video sites)
+  // Flow: user sends a URL -> status link_probe -> helper lists qualities (POST /helper/formats)
+  // -> link_choose: user picks a quality -> link_download -> helper downloads + uploads to Arvan.
+  blockedSite(host) {
+    const h = host.toLowerCase().replace(/^www\./, '');
+    return BLOCKED_SITES.some((d) => h === d || h.endsWith('.' + d) || h.includes(d.split('.')[0] + '.'));
+  }
+
+  async addLink(m, user, raw) {
+    let url;
+    try { url = new URL(raw); } catch { return this.send(m.chat.id, '❌ این لینک معتبر نیست.', null, m.message_id); }
+    if (!/^https?:$/.test(url.protocol)) return this.send(m.chat.id, '❌ این لینک معتبر نیست.', null, m.message_id);
+    if (this.blockedSite(url.hostname)) {
+      return this.send(m.chat.id, '⛔️ دانلود از این سایت پشتیبانی نمی‌شود.', null, m.message_id);
+    }
+    const lim = this.limits(user);
+    if (this.freeFor(user) < 1e6 || this.monthUsage(user).up >= lim.upCap) {
+      return this.send(m.chat.id, '⚠️ فضای کافی ندارید. فایل‌های قدیمی را از «📂 فایل‌های من» پاک کنید یا اشتراک بگیرید.',
+        [[{ text: '📦 خرید فضای بیشتر', callback_data: 'b' }]], m.message_id);
+    }
+    const id = randomId();
+    this.sql.exec(`INSERT INTO files(id,name,mime,size,kind,status,chat_id,created_at,owner,storage,source_url)
+      VALUES (?,?,?,?,?,?,?,?,?,'arvan',?)`, id, url.hostname, 'video/mp4', 0, 'video', 'link_probe', m.chat.id, Date.now(), user.id, url.href);
+    const sent = await this.send(m.chat.id, `🔎 در حال بررسی لینک…\n<code>${esc(short(url.href, 60))}</code>\nکیفیت‌های موجود تا حدود یک دقیقه دیگر نمایش داده می‌شود.`,
+      [[{ text: '❌ لغو', callback_data: `c:${id}` }]], m.message_id);
+    if (sent.ok) this.sql.exec('UPDATE files SET msg_id=? WHERE id=?', sent.result.message_id, id);
+    await this.wakeHelper();
+  }
+
+  // Helper reports the qualities of a link.
+  async helperFormats(req, id) {
+    const f = this.one(`SELECT * FROM files WHERE id=? AND status='link_probe'`, id);
+    if (!f) return new Response('no such job', { status: 404 });
+    const info = await req.json();
+    const formats = (info.formats || []).slice(0, 8);
+    if (!formats.length) {
+      this.sql.exec(`UPDATE files SET status='failed', error=? WHERE id=?`, 'no formats', id);
+      await this.edit(f.chat_id, f.msg_id, '❌ ویدیویی در این لینک پیدا نشد یا قابل دانلود نیست.');
+      return Response.json({ ok: true });
+    }
+    const title = cleanName(info.title || f.name).slice(0, 120);
+    this.sql.exec(`UPDATE files SET status='link_choose', name=?, duration=?, formats=? WHERE id=?`,
+      title, Math.round(info.duration || 0) || null, JSON.stringify({ thumbnail: info.thumbnail || null, formats }), id);
+    await this.showQualities(this.one('SELECT * FROM files WHERE id=?', id));
+    return Response.json({ ok: true });
+  }
+
+  async showQualities(f) {
+    const user = this.user(f.owner);
+    const free = this.freeFor(user);
+    const { formats } = JSON.parse(f.formats || '{"formats":[]}');
+    const kb = formats.map((q, i) => {
+      const fits = !q.size || q.size <= free;
+      return [{ text: `${q.audio ? '🎵' : '🎬'} ${q.label}${q.size ? ` — ${fmtSize(q.size)}` : ''}${fits ? '' : ' ⚠️'}`, callback_data: `lq:${f.id}:${i}` }];
+    });
+    kb.push([{ text: '❌ لغو', callback_data: `c:${f.id}` }]);
+    const dur = f.duration ? `⏱ ${Math.floor(f.duration / 60)}:${String(f.duration % 60).padStart(2, '0')}\n` : '';
+    await this.edit(f.chat_id, f.msg_id, `🎬 <b>${esc(f.name)}</b>\n${dur}\nکیفیت دانلود را انتخاب کنید:\n<i>فضای آزاد شما: ${fmtSize(free)}</i>`, kb);
+  }
+
+  async chooseQuality(cb, user, id, idx) {
+    const answer = (text, alert = false) => this.tg('answerCallbackQuery', { callback_query_id: cb.id, text, show_alert: alert });
+    const f = this.one(`SELECT * FROM files WHERE id=? AND status='link_choose' AND owner=?`, id, user.id);
+    if (!f) return answer('این درخواست منقضی شده است');
+    const q = JSON.parse(f.formats).formats[Number(idx)];
+    if (!q) return answer();
+    const size = q.size || 0;
+    if (size > this.freeFor(user)) return answer(`فضای کافی ندارید (${fmtSize(size)} لازم است). فایل‌های قدیمی را پاک کنید یا اشتراک بگیرید.`, true);
+    if (this.monthUsage(user).up + size > this.limits(user).upCap) return answer('به سقف مصرف منصفانه آپلود این ماه رسیده‌اید.', true);
+    const ext = q.audio ? 'm4a' : 'mp4';
+    this.sql.exec(`UPDATE files SET status='link_download', fmt=?, size=?, kind=?, mime=?, obj_key=? WHERE id=?`,
+      JSON.stringify(q), size, q.audio ? 'audio' : 'video', q.audio ? 'audio/mp4' : 'video/mp4', `f/${id}/${cleanName(f.name)}.${ext}`, id);
+    await this.edit(f.chat_id, f.msg_id, `⏳ <b>${esc(f.name)}</b> — ${esc(q.label)}\nدر حال دانلود و انتقال به تلویزیون…`, [[{ text: '❌ لغو', callback_data: `c:${id}` }]]);
+    await this.wakeHelper();
+    return answer('دانلود شروع شد');
+  }
+
+  tutorialText() {
+    return [
+      '📖 <b>آموزش TeleTVShare</b>',
+      '',
+      '<b>۱. نصب اپ روی تلویزیون</b>',
+      'دکمه «📲 دریافت اپ تلویزیون» را بزنید و طبق راهنما نصب کنید. اپ در ایران بدون VPN کار می‌کند.',
+      '',
+      '<b>۲. اتصال تلویزیون به حساب</b>',
+      'اپ را باز کنید؛ یک QR و یک کد ۸ حرفی نشان می‌دهد. QR را با دوربین گوشی اسکن کنید و Start را بزنید، یا کد را از «📺 تلویزیون» همین‌جا بفرستید. هر حساب روی یک تلویزیون فعال است.',
+      '',
+      '<b>۳. فرستادن فایل</b>',
+      'هر ویدیو، عکس، آهنگ یا فایلی را اینجا بفرستید یا Forward کنید؛ چند ثانیه بعد روی تلویزیون است. فایل‌های بزرگ کمی بیشتر طول می‌کشند.',
+      '',
+      '<b>۴. دانلود از سایت‌های ویدیو 🔗</b>',
+      'کافی است لینک ویدیو را بفرستید؛ کیفیت‌های موجود با حجمشان نمایش داده می‌شود، یکی را انتخاب کنید تا دانلود شود و روی تلویزیون بدون VPN ببینید.',
+      'سایت‌های پشتیبانی‌شده: یوتیوب، آپارات، اینستاگرام، تیک‌تاک، ایکس (توییتر)، فیسبوک، ویمئو، دیلی‌موشن، توییچ، ردیت، ساندکلاد و بسیاری از سایت‌های عمومی ویدیو.',
+      '',
+      '<b>۵. مدیریت فایل‌ها</b>',
+      'از «📂 فایل‌های من» فایل‌ها را ببینید و پاک کنید. با پاک کردن، از تلویزیون هم حذف می‌شوند.',
+      '',
+      '<b>۶. اشتراک</b>',
+      'از «📦 خرید یا تمدید اشتراک» پلن و مدت را انتخاب کنید، مبلغ را کارت‌به‌کارت کنید و عکس رسید را بفرستید. اگر کد هدیه دارید، از «🎁 کد هدیه» وارد کنید.',
+      '',
+      'سؤالی بود؟ «💬 پشتیبانی» را بزنید.',
+    ].join('\n');
+  }
+
+  sendTutorial(chat) {
+    return this.send(chat, this.tutorialText(), [
+      [{ text: '📲 دریافت اپ تلویزیون', callback_data: 'app' }, { text: '📺 اتصال تلویزیون', callback_data: 't' }],
+      [{ text: '💬 پشتیبانی', callback_data: 'sup' }],
+    ]);
+  }
+
   tvStatus(user) {
     const d = this.one('SELECT * FROM devices WHERE user_id=?', user.id);
     if (!d) {
@@ -1025,6 +1145,8 @@ export class Store extends DurableObject {
       case 'g': this.setState(user.id, 'gift'); await this.send(chatId, '🎁 کد هدیه را بفرستید:'); return answer();
       case 't': { const v = this.tvStatus(user); await this.send(chatId, v.text, v.kb); return answer(); }
       case 'app': await this.sendApp(chatId); return answer();
+      case 'help': await this.sendTutorial(chatId); return answer();
+      case 'lq': return this.chooseQuality(cb, user, a, b);
       case 'sup': await this.supportStart(chatId, user); return answer();
       case 'se_end': this.setState(user.id, null); await this.send(chatId, 'گفتگو با پشتیبانی بسته شد. هر وقت سؤالی داشتید، دوباره «💬 پشتیبانی» را بزنید.', this.menuKeyboard()); return answer();
       case 'tc': this.setState(user.id, 'tv'); await this.send(chatId, '🔢 کد ۸ حرفی که روی صفحه تلویزیون است را بفرستید:'); return answer();
@@ -1586,6 +1708,7 @@ export class Store extends DurableObject {
     const now = Date.now();
     const low = () => this.budget() < 8;
     this.sql.exec('DELETE FROM seen2 WHERE at < ?', now - 3 * DAY);
+    this.sql.exec(`DELETE FROM files WHERE status IN ('link_choose','link_probe') AND created_at < ?`, now - 6 * 3600e3);
     this.sql.exec('DELETE FROM seen');
     this.sql.exec('DELETE FROM pairs');
     for (const p of this.q('SELECT code FROM tv_pairs WHERE created_at < ? LIMIT 10', now - PAIR_TTL)) {
@@ -1791,13 +1914,19 @@ export class Store extends DurableObject {
 
   // ================================================================ large-file helper (GitHub Actions)
   helperJobs() {
-    const jobs = this.q(`SELECT id,name,size,mime,tg_file_id,obj_key FROM files WHERE status IN ('waiting_helper','helper_uploading') ORDER BY created_at`)
-      .map((j) => ({ ...j, disposition: this.disposition(j.name) }));
-    return Response.json({ jobs });
+    const jobs = this.q(`SELECT id,name,size,mime,tg_file_id,obj_key,status,source_url,fmt FROM files
+        WHERE status IN ('waiting_helper','helper_uploading','link_probe','link_download') ORDER BY created_at`)
+      .map((j) => ({
+        id: j.id, name: j.name, size: j.size, mime: j.mime, tg_file_id: j.tg_file_id, obj_key: j.obj_key,
+        type: j.status === 'link_probe' ? 'probe' : j.source_url ? 'link' : 'tg',
+        url: j.source_url, fmt: j.fmt ? JSON.parse(j.fmt) : null, disposition: this.disposition(j.name),
+      }));
+    const waiting = this.one(`SELECT COUNT(*) AS c FROM files WHERE status='link_choose' AND created_at > ?`, Date.now() - 10 * 60_000).c;
+    return Response.json({ jobs, waiting });
   }
 
   async helperProgress(req, id) {
-    const f = this.one(`SELECT * FROM files WHERE id=? AND status IN ('waiting_helper','helper_uploading')`, id);
+    const f = this.one(`SELECT * FROM files WHERE id=? AND status IN ('waiting_helper','helper_uploading','link_download')`, id);
     if (!f) return new Response('no such job', { status: 404 });
     this.sql.exec(`UPDATE files SET status='helper_uploading' WHERE id=?`, id);
     const { done = 0, total = f.size, speed = 0 } = await req.json().catch(() => ({}));
@@ -1809,7 +1938,7 @@ export class Store extends DurableObject {
   }
 
   async helperDone(req, kind, id) {
-    const f = this.one(`SELECT * FROM files WHERE id=? AND status IN ('waiting_helper','helper_uploading')`, id);
+    const f = this.one(`SELECT * FROM files WHERE id=? AND status IN ('waiting_helper','helper_uploading','link_probe','link_download')`, id);
     if (!f) return new Response('no such job', { status: 404 });
     if (kind === 'fail') {
       const why = (await req.text()).slice(0, 500) || 'helper error';
@@ -1818,9 +1947,13 @@ export class Store extends DurableObject {
         [[{ text: '🔁 دوباره', callback_data: `r:${id}` }, { text: '❌ لغو', callback_data: `c:${id}` }]]);
       return Response.json({ ok: true });
     }
+    const extra = await req.json().catch(() => ({}));
+    if (extra.thumb_key) this.sql.exec('UPDATE files SET thumb_key=? WHERE id=?', extra.thumb_key, id);
+    if (extra.duration) this.sql.exec('UPDATE files SET duration=? WHERE id=?', Math.round(extra.duration), id);
+    if (extra.width) this.sql.exec('UPDATE files SET width=?, height=? WHERE id=?', extra.width, extra.height || null, id);
     const size = await this.s3head(f.obj_key);
     if (!size) return new Response('object missing in Arvan', { status: 409 });
-    await this.finishFile(f, size);
+    await this.finishFile(this.one('SELECT * FROM files WHERE id=?', id), size);
     return Response.json({ ok: true, size });
   }
 }

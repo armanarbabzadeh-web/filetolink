@@ -137,25 +137,99 @@ async def process(job):
             log.warning("could not report failure (job may have been cancelled)")
 
 
+async def fail(jid, e):
+    try:
+        await call("POST", f"/helper/fail/{jid}", data=f"{type(e).__name__}: {str(e)[:300]}", tries=2)
+    except Exception:
+        log.warning("could not report failure (job may have been cancelled)")
+
+
+async def probe_link(job):
+    import links
+    jid = job["id"]
+    log.info("probe %s", jid)
+    loop = asyncio.get_running_loop()
+    try:
+        info = await loop.run_in_executor(None, links.probe, job["url"])
+        await call("POST", f"/helper/formats/{jid}", json=info)
+        log.info("probe %s: %d quality option(s)", jid, len(info["formats"]))
+    except Exception as e:
+        log.warning("probe %s failed: %s", jid, type(e).__name__)
+        await fail(jid, e)
+
+
+async def download_link(job):
+    import links
+    jid, key = job["id"], job["obj_key"]
+    log.info("link %s (%s)", jid, job["fmt"].get("label"))
+    loop = asyncio.get_running_loop()
+    started = time.time()
+
+    def progress(done, total, speed):
+        asyncio.run_coroutine_threadsafe(
+            call("POST", f"/helper/progress/{jid}", json={"done": int(done), "total": int(total or job["size"] or 0), "speed": int(speed)}, tries=1), loop)
+
+    try:
+        path, info = await loop.run_in_executor(None, links.download, job["url"], job["fmt"], progress)
+        size = os.path.getsize(path)
+        await loop.run_in_executor(None, lambda: s3.upload_file(path, BUCKET, key, ExtraArgs={
+            "ACL": "public-read", "ContentType": links.content_type(path), "ContentDisposition": job.get("disposition") or "inline"}))
+        extra = {"duration": info.get("duration"), "width": info.get("width"), "height": info.get("height")}
+        try:
+            thumb = await loop.run_in_executor(None, links.fetch_thumbnail, info.get("thumbnail"))
+            if thumb:
+                tkey = f"t/{jid}.jpg"
+                await loop.run_in_executor(None, lambda: s3.put_object(Bucket=BUCKET, Key=tkey, Body=thumb, ACL="public-read",
+                                                                       ContentType="image/jpeg", CacheControl="public, max-age=604800"))
+                extra["thumb_key"] = tkey
+        except Exception:
+            log.warning("thumbnail skipped")
+        os.remove(path)
+        for attempt in range(1, 6):
+            try:
+                res = await call("POST", f"/helper/finish/{jid}", json=extra)
+                break
+            except PermissionError as e:
+                if "409" not in str(e) or attempt == 5:
+                    raise
+                await asyncio.sleep(5 * attempt)
+        log.info("link %s done in %.0fs (%d bytes)", jid, time.time() - started, size)
+    except Exception as e:
+        log.warning("link %s failed: %s", jid, type(e).__name__)
+        await fail(jid, e)
+
+
 async def run_once():
     global http
     http = ClientSession(timeout=ClientTimeout(total=None, sock_connect=30, sock_read=300))
     await tg.start()
     log.info("logged in as @%s", (await tg.get_me()).username)
-    tried = set()
+    done = set()
+    idle_since = None
     try:
         while True:
             data = await call("GET", "/helper/jobs")
-            jobs = [j for j in data.get("jobs", []) if j["id"] not in tried]
+            jobs = [j for j in data.get("jobs", []) if (j["id"], j["type"]) not in done]
             if not jobs:
+                # a user may still be choosing a quality: stay around a few minutes instead of starting a new run
+                if data.get("waiting") and (idle_since is None or time.time() - idle_since < 300):
+                    idle_since = idle_since or time.time()
+                    await asyncio.sleep(4)
+                    continue
                 break
+            idle_since = None
             for job in jobs:
-                tried.add(job["id"])
-                await process(job)
+                done.add((job["id"], job["type"]))
+                if job["type"] == "probe":
+                    await probe_link(job)
+                elif job["type"] == "link":
+                    await download_link(job)
+                else:
+                    await process(job)
     finally:
         await tg.stop()
         await http.close()
-    log.info("queue empty, %d job(s) handled", len(tried))
+    log.info("queue empty, %d job(s) handled", len(done))
 
 
 if __name__ == "__main__":

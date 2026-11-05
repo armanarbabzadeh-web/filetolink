@@ -14,7 +14,7 @@ concurrency:
 jobs:
   move:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
         with:
@@ -26,7 +26,12 @@ jobs:
           cache: pip
           cache-dependency-path: helper/requirements.txt
 
-      - run: pip install -r helper/requirements.txt
+      # yt-dlp needs a JavaScript runtime for YouTube
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - run: pip install -U -r helper/requirements.txt
 
       - name: Move queued files
         working-directory: helper

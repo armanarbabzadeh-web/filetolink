@@ -99,9 +99,9 @@ class MainActivity : AppCompatActivity() {
             Prefs.setReportUrl(this, m.reportUrl)
             blocked = m.blocked
             warn.visibility = if (blocked) View.VISIBLE else View.GONE
-            val quota = m.quota?.let { " از ${Fmt.faSize(it)}" } ?: ""
+            val quota = m.quota?.let { "‏ از ‏${Fmt.faSize(it)}" } ?: ""
             // isolate the (possibly Latin) name so it doesn't reorder the Persian text around it
-            userChip.text = "⁨${m.userName}⁩   •   ⁧${Fmt.faSize(m.used)}$quota⁩"
+            userChip.text = "‏${Fmt.faSize(m.used)}$quota‏   •   ⁨${m.userName}⁩"
             val ids = m.files.map { it.id }.toSet()
             val prev = known
             if (prev != null) {
