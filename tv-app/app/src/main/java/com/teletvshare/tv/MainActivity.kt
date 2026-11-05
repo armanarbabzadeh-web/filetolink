@@ -100,7 +100,8 @@ class MainActivity : AppCompatActivity() {
             blocked = m.blocked
             warn.visibility = if (blocked) View.VISIBLE else View.GONE
             val quota = m.quota?.let { " از ${Fmt.faSize(it)}" } ?: ""
-            userChip.text = "${m.userName}   ${Fmt.faSize(m.used)}$quota"
+            // isolate the (possibly Latin) name so it doesn't reorder the Persian text around it
+            userChip.text = "⁨${m.userName}⁩   •   ⁧${Fmt.faSize(m.used)}$quota⁩"
             val ids = m.files.map { it.id }.toSet()
             val prev = known
             if (prev != null) {
