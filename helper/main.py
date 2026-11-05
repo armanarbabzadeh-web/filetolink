@@ -95,6 +95,7 @@ async def process(job):
             Bucket=BUCKET, Key=key, UploadId=upload_id, PartNumber=n, Body=data))
         parts.append({"PartNumber": n, "ETag": res["ETag"]})
 
+    completed = False
     try:
         async for piece in tg.stream_media(job["tg_file_id"]):
             buf += piece
@@ -113,11 +114,23 @@ async def process(job):
             await flush(bytes(buf))
         await loop.run_in_executor(None, lambda: s3.complete_multipart_upload(
             Bucket=BUCKET, Key=key, UploadId=upload_id, MultipartUpload={"Parts": parts}))
-        res = await call("POST", f"/helper/finish/{jid}")
+        completed = True
+        for attempt in range(1, 6):  # Arvan can take a moment before the new object is visible
+            try:
+                res = await call("POST", f"/helper/finish/{jid}")
+                break
+            except PermissionError as e:
+                if "409" not in str(e) or attempt == 5:
+                    raise
+                await asyncio.sleep(5 * attempt)
         log.info("job %s done in %.0fs: %s", jid, time.time() - started, res)
     except Exception as e:
         log.exception("job %s failed", jid)
-        await loop.run_in_executor(None, lambda: s3.abort_multipart_upload(Bucket=BUCKET, Key=key, UploadId=upload_id))
+        if not completed:
+            try:
+                await loop.run_in_executor(None, lambda: s3.abort_multipart_upload(Bucket=BUCKET, Key=key, UploadId=upload_id))
+            except Exception:
+                log.warning("abort failed (ignored)")
         try:
             await call("POST", f"/helper/fail/{jid}", data=f"{type(e).__name__}: {e}"[:400], tries=2)
         except Exception:

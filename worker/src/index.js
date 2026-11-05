@@ -23,11 +23,16 @@ const WELCOME = { plan: 'p500', days: 7 };
 
 const PLANS = {
   free: { title: 'رایگان', quota: 100e6, price: 0 },
-  p500: { title: '۵۰۰ مگابایت', quota: 500e6, price: 50_000 },
-  p2g: { title: '۲ گیگابایت', quota: 2e9, price: 150_000 },
-  p5g: { title: '۵ گیگابایت', quota: 5e9, price: 350_000 },
+  p500: { title: '۵۰۰ مگابایت (هدیه عضویت)', quota: 500e6, price: 0 }, // welcome gift only
+  p1g: { title: '۱ گیگابایت', quota: 1e9, price: 19_000 },
+  p5g: { title: '۵ گیگابایت', quota: 5e9, price: 74_000 },
+  p20g: { title: '۲۰ گیگابایت', quota: 20e9, price: 189_000 },
+  p50g: { title: '۵۰ گیگابایت', quota: 50e9, price: 289_000 },
 };
-const PLAN_ORDER = ['free', 'p500', 'p2g', 'p5g'];
+const PLAN_ORDER = ['free', 'p500', 'p1g', 'p5g', 'p20g', 'p50g']; // for upgrade/downgrade checks
+const SALE = ['p1g', 'p5g', 'p20g', 'p50g'];                        // plans that can be bought or gifted
+const PLAN_ALIAS = { '1': 'p1g', '1g': 'p1g', p1g: 'p1g', '5': 'p5g', '5g': 'p5g', p5g: 'p5g',
+  '20': 'p20g', '20g': 'p20g', p20g: 'p20g', '50': 'p50g', '50g': 'p50g', p50g: 'p50g' };
 const ACTIVE = `('ready','uploading','queued','waiting_helper','helper_uploading')`;
 const CODE_ABC = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
@@ -208,7 +213,7 @@ export class Store extends DurableObject {
     return ({
       card_number: this.env.CARD_NUMBER, card_name: this.env.CARD_NAME, card_bank: this.env.CARD_BANK,
       mult: '20',
-      price_p500: String(PLANS.p500.price), price_p2g: String(PLANS.p2g.price), price_p5g: String(PLANS.p5g.price),
+      ...Object.fromEntries(SALE.map((k) => ['price_' + k, String(PLANS[k].price)])),
     })[key] ?? null;
   }
   price(plan) { return Number(this.setting('price_' + plan)) || 0; }
@@ -310,11 +315,11 @@ export class Store extends DurableObject {
     return r;
   }
   // Size of an object; retries because a just-completed upload can take a moment to show up.
-  async s3head(key, tries = 5) {
+  async s3head(key, tries = 6) {
     for (let i = 1; ; i++) {
       const r = await this.s3().fetch(this.objUrl(key), { method: 'HEAD', headers: { 'x-amz-content-sha256': 'UNSIGNED-PAYLOAD' } });
       if (r.ok) return Number(r.headers.get('content-length'));
-      if (i >= tries || r.status !== 404) return null;
+      if (i >= tries) return null;
       await new Promise((res) => setTimeout(res, 1500 * i));
     }
   }
@@ -511,7 +516,7 @@ export class Store extends DurableObject {
   plansText(user) {
     const mult = Number(this.setting('mult')) || 20;
     const lines = ['📦 <b>اشتراک‌های ماهانه TeleTVShare</b>', ''];
-    for (const k of PLAN_ORDER.slice(1)) {
+    for (const k of SALE) {
       lines.push(`• <b>${PLANS[k].title}</b> فضا — ${faNum(this.price(k))} تومان در ماه`);
     }
     lines.push('', `آپلود و تماشای ماهانه هر پلن تا ${faNum(mult)} برابر فضای آن است.`, `پلن فعلی شما: ${this.limits(user).title}`);
@@ -521,7 +526,7 @@ export class Store extends DurableObject {
   plansKeyboard(user) {
     const cur = PLAN_ORDER.indexOf(user.plan);
     const active = user.plan !== 'free' && user.expires_at > Date.now();
-    const rows = PLAN_ORDER.slice(1)
+    const rows = SALE
       .filter((k) => !active || PLAN_ORDER.indexOf(k) >= cur)
       .map((k) => [{
         text: `${k === user.plan && active ? '🔄 تمدید' : '🛒'} ${PLANS[k].title} — ${faNum(this.price(k))} تومان`,
@@ -545,7 +550,7 @@ export class Store extends DurableObject {
   }
 
   async onReceipt(m, user, plan) {
-    if (!PLANS[plan] || plan === 'free') return;
+    if (!SALE.includes(plan)) return;
     this.setState(user.id, null);
     const isPhoto = !!m.photo;
     const fileId = isPhoto ? m.photo[m.photo.length - 1].file_id : m.document.file_id;
@@ -818,7 +823,7 @@ export class Store extends DurableObject {
       case 'a': await this.send(chatId, this.accountText(user), this.menuKeyboard()); return answer();
       case 'b': await this.send(chatId, this.plansText(user), this.plansKeyboard(user)); return answer();
       case 'B': {
-        if (!PLANS[a] || a === 'free') return answer();
+        if (!SALE.includes(a)) return answer();
         this.setState(user.id, `receipt:${a}`);
         await this.send(chatId, this.paymentText(a), [[{ text: '❌ انصراف', callback_data: 'bc' }]]);
         return answer();
@@ -925,7 +930,7 @@ export class Store extends DurableObject {
     }
     if (name === 'gift') {
       const [planArg, daysArg, usesArg] = arg.split(/\s+/);
-      const plan = { 500: 'p500', p500: 'p500', '2': 'p2g', '2g': 'p2g', p2g: 'p2g', '5': 'p5g', '5g': 'p5g', p5g: 'p5g' }[String(planArg || '').toLowerCase()];
+      const plan = PLAN_ALIAS[String(planArg || '').toLowerCase()];
       if (!plan) return A(this.giftHelp());
       const days = Math.max(1, Math.min(365, Number(daysArg) || 30));
       const uses = Math.max(1, Math.min(10000, Number(usesArg) || 1));
@@ -965,9 +970,9 @@ export class Store extends DurableObject {
     return [
       '🎁 <b>ساخت کد هدیه</b>',
       '<code>/gift پلن [روز] [تعداد استفاده]</code>',
-      '', 'پلن: <code>500</code> یا <code>2g</code> یا <code>5g</code>',
-      'مثال: <code>/gift 2g 30 1</code> ← یک کد ۲ گیگ، ۳۰ روزه، یک‌بار مصرف',
-      'مثال: <code>/gift 500 7 20</code> ← کد ۵۰۰ مگ، ۷ روزه، برای ۲۰ نفر',
+      '', 'پلن: <code>1g</code> یا <code>5g</code> یا <code>20g</code> یا <code>50g</code>',
+      'مثال: <code>/gift 5g 30 1</code> ← یک کد ۵ گیگ، ۳۰ روزه، یک‌بار مصرف',
+      'مثال: <code>/gift 1g 7 20</code> ← کد ۱ گیگ، ۷ روزه، برای ۲۰ نفر',
     ].join('\n');
   }
 
@@ -998,7 +1003,7 @@ export class Store extends DurableObject {
       `👤 به نام: ${esc(this.setting('card_name'))}`,
       `🏦 بانک: ${esc(this.setting('card_bank'))}`,
       '',
-      ...PLAN_ORDER.slice(1).map((k) => `📦 ${PLANS[k].title}: ${faNum(this.price(k))} تومان`),
+      ...SALE.map((k) => `📦 ${PLANS[k].title}: ${faNum(this.price(k))} تومان`),
       '',
       `📈 سقف آپلود و تماشای ماهانه: ${faNum(mult)} برابر فضای پلن`,
     ].join('\n');
@@ -1008,7 +1013,8 @@ export class Store extends DurableObject {
     return [
       [{ text: '💳 شماره کارت', callback_data: 'se:card_number' }, { text: '👤 نام صاحب کارت', callback_data: 'se:card_name' }],
       [{ text: '🏦 بانک', callback_data: 'se:card_bank' }, { text: '📈 ضریب سقف ماهانه', callback_data: 'se:mult' }],
-      PLAN_ORDER.slice(1).map((k) => ({ text: `قیمت ${PLANS[k].title}`, callback_data: `se:price_${k}` })),
+      SALE.slice(0, 2).map((k) => ({ text: `قیمت ${PLANS[k].title}`, callback_data: `se:price_${k}` })),
+      SALE.slice(2).map((k) => ({ text: `قیمت ${PLANS[k].title}`, callback_data: `se:price_${k}` })),
     ];
   }
 
@@ -1176,7 +1182,8 @@ export class Store extends DurableObject {
     ].join('\n');
     const kb = [
       [{ text: '➕ تمدید ۳۰ روز', callback_data: `u:${uid}:ext` }],
-      [{ text: '۵۰۰ مگ', callback_data: `u:${uid}:p500` }, { text: '۲ گیگ', callback_data: `u:${uid}:p2g` }, { text: '۵ گیگ', callback_data: `u:${uid}:p5g` }, { text: 'رایگان', callback_data: `u:${uid}:free` }],
+      [{ text: '۱ گیگ', callback_data: `u:${uid}:p1g` }, { text: '۵ گیگ', callback_data: `u:${uid}:p5g` }, { text: '۲۰ گیگ', callback_data: `u:${uid}:p20g` }, { text: '۵۰ گیگ', callback_data: `u:${uid}:p50g` }],
+      [{ text: 'رایگان', callback_data: `u:${uid}:free` }],
       [u.banned ? { text: '✅ رفع مسدودی', callback_data: `u:${uid}:unban` } : { text: '⛔️ مسدود کردن', callback_data: `u:${uid}:ban` }, { text: '🔌 قطع تلویزیون', callback_data: `u:${uid}:tvoff` }],
     ];
     return { text, kb };
@@ -1428,14 +1435,23 @@ export class Store extends DurableObject {
         ? this.q('SELECT id,name,size,status,storage,obj_key,thumb_key,owner,created_at FROM files WHERE owner=? ORDER BY created_at', Number(owner))
         : this.q('SELECT id,name,size,status,storage,obj_key,thumb_key,owner,created_at FROM files ORDER BY created_at'));
     }
+    if (p === '/api/admin/head') {
+      const key = url.searchParams.get('key');
+      const r = await this.s3().fetch(this.objUrl(key), { method: 'HEAD', headers: { 'x-amz-content-sha256': 'UNSIGNED-PAYLOAD' } });
+      return Response.json({ status: r.status, len: r.headers.get('content-length'), url: this.objUrl(key), size: await this.s3head(key, 1) });
+    }
     if (p === '/api/admin/maintenance' && req.method === 'POST') return Response.json({ more: await this.maintenance(), subrequests: this.sub });
     if (p === '/api/admin/migrate' && req.method === 'POST') {
       try { return Response.json(await this.migrateOne()); } catch (e) { return Response.json({ error: String(e.stack || e) }, { status: 500 }); }
     }
     if (p === '/api/admin/payments') return Response.json(this.q('SELECT * FROM payments ORDER BY id'));
     if (p === '/api/admin/gifts') return Response.json(this.q('SELECT * FROM gift_codes ORDER BY created_at'));
+    if (p === '/api/admin/settings' && req.method === 'PATCH') {
+      const b = await req.json();
+      for (const [k, v] of Object.entries(b)) this.meta('set_' + k, v == null ? null : String(v));
+    }
     if (p === '/api/admin/settings') return Response.json(Object.fromEntries(
-      ['card_number', 'card_name', 'card_bank', 'mult', 'price_p500', 'price_p2g', 'price_p5g'].map((k) => [k, this.setting(k)])));
+      ['card_number', 'card_name', 'card_bank', 'mult', ...SALE.map((k) => 'price_' + k)].map((k) => [k, this.setting(k)])));
     return Response.json({ error: 'not found' }, { status: 404 });
   }
 
