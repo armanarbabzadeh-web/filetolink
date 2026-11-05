@@ -1,62 +1,61 @@
 #!/usr/bin/env bash
-# Takes screenshots of the TV app in an Android TV emulator (run by .github/workflows/tv-apk.yml).
+# Android TV emulator test + screenshots (run by .github/workflows/tv-apk.yml).
+# Pairs for real: the app shows a known code, then this script sends "/start tv_<code>" to the
+# bot as the demo user (exactly what scanning the QR does) and checks that the app moves on.
 set -x
 P=com.teletvshare.tv
 APK=$(ls apk/*.apk | head -1)
 mkdir -p shots
 shot() { sleep "$2"; adb exec-out screencap -p > "shots/$1.png"; }
+CODE=$(python3 -c "import random; print(''.join(random.choice('ABCDEFGHJKLMNPQRSTUVWXYZ23456789') for _ in range(8)))")
 
-curl -s -o /dev/null -w "runner manifest HTTP %{http_code}
-" "$DEMO_MANIFEST"
-adb shell date
 adb install -r "$APK"
 adb logcat -c
 adb shell settings put system screen_off_timeout 1800000
 
-# 1. pairing screen
-adb shell am start -W -n $P/.PairActivity
-shot 1-pairing 8
+# 1. pairing screen with a known code
+adb shell am start -W -n $P/.PairActivity --es code "$CODE"
+shot 1-pairing 10
 
-# 2. home with the demo account
-adb shell am start -W -n $P/.PairActivity --es manifest "$DEMO_MANIFEST"
-shot 2-home 20
+# 2. the demo user confirms the code in Telegram -> the TV should open its files by itself
+curl -s -A ttvs-ci -X POST "$WORKER_URL/tg/$WEBHOOK_SECRET" \
+  -H "content-type: application/json" -H "x-telegram-bot-api-secret-token: $WEBHOOK_SECRET" \
+  -d "{\"update_id\": $(date +%s%N | cut -c1-15), \"message\": {\"message_id\": 1, \"date\": $(date +%s), \"from\": {\"id\": 1000000099, \"is_bot\": false, \"first_name\": \"Ali\"}, \"chat\": {\"id\": 1000000099, \"type\": \"private\"}, \"text\": \"/start tv_$CODE\"}}"
+shot 2-home 25
+adb shell dumpsys activity activities | grep -E "mResumedActivity|topResumedActivity" | head -2
 
-# 3. focus moved to another card
+# 3. focus moves across the cards
 adb shell input keyevent KEYCODE_DPAD_LEFT
 adb shell input keyevent KEYCODE_DPAD_LEFT
 shot 3-focus 2
 
-# 4. videos tab
-adb shell am start -W -n $P/.MainActivity --es filter video
-shot 4-videos 12
+# 4. videos tab (fresh start keeps the saved connection)
+adb shell am start -S -W -n $P/.MainActivity --es filter video
+shot 4-videos 15
 
 # 5. video player
 adb shell input keyevent KEYCODE_DPAD_CENTER
 shot 5-player 12
 adb shell input keyevent KEYCODE_DPAD_CENTER
 shot 5b-player-controls 2
-adb shell input keyevent KEYCODE_BACK
-adb shell input keyevent KEYCODE_BACK
-sleep 3
 
 # 6. photo viewer
-adb shell am start -W -n $P/.MainActivity --es filter image
-sleep 10
+adb shell am start -S -W -n $P/.MainActivity --es filter image
+sleep 15
 adb shell input keyevent KEYCODE_DPAD_CENTER
 shot 6-photo 10
-adb shell input keyevent KEYCODE_BACK
-sleep 2
 
-# 7. log-out dialog (focus the header button and press it)
-adb shell am start -W -n $P/.MainActivity
-sleep 10
-adb shell input keyevent KEYCODE_DPAD_UP
-adb shell input keyevent KEYCODE_DPAD_UP
-adb shell input keyevent KEYCODE_DPAD_UP
-adb shell input keyevent KEYCODE_MOVE_END
-shot 7-header-focus 2
-echo "=== CRASH BUFFER ==="
-adb logcat -d -b crash | head -80
+# 7. log-out dialog
+adb shell am start -S -W -n $P/.MainActivity
+sleep 15
+for k in UP UP UP; do adb shell input keyevent KEYCODE_DPAD_$k; done
+adb shell input keyevent KEYCODE_DPAD_LEFT
+adb shell input keyevent KEYCODE_DPAD_LEFT
+adb shell input keyevent KEYCODE_DPAD_LEFT
+shot 7-header 2
+adb shell input keyevent KEYCODE_DPAD_CENTER
+shot 8-logout 3
+
 echo "=== APP LOG ==="
-adb logcat -d ActivityTaskManager:I ActivityManager:I TeleTVShare:V AndroidRuntime:E System.err:W *:S | grep -iE "teletvshare|FATAL|Exception|at com" | head -60
+adb logcat -d ActivityTaskManager:I TeleTVShare:V AndroidRuntime:E *:S | grep -iE "teletvshare|FATAL|Exception|at com" | head -60
 exit 0
