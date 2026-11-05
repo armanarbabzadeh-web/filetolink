@@ -22,15 +22,21 @@ const MANIFEST_REFRESH = 3 * DAY;     // presigned report URL lives 7 days
 const WELCOME = { plan: 'p500', days: 7 };
 
 const PLANS = {
-  free: { title: 'رایگان', quota: 100e6, price: 0 },
-  p500: { title: '۵۰۰ مگابایت (هدیه عضویت)', quota: 500e6, price: 0 }, // welcome gift only
-  p1g: { title: '۱ گیگابایت', quota: 1e9, price: 19_000 },
-  p5g: { title: '۵ گیگابایت', quota: 5e9, price: 74_000 },
-  p20g: { title: '۲۰ گیگابایت', quota: 20e9, price: 189_000 },
-  p50g: { title: '۵۰ گیگابایت', quota: 50e9, price: 289_000 },
+  free: { title: 'رایگان', quota: 100e6, price: 0, fw: 3 },
+  p500: { title: '۵۰۰ مگابایت (هدیه عضویت)', quota: 500e6, price: 0, fw: 3 }, // welcome gift only
+  // fw = fair-use monthly viewing as a multiple of the plan's storage (not shown to users)
+  p1g: { title: '۱ گیگابایت', quota: 1e9, price: 12_900, fw: 3 },
+  p5g: { title: '۵ گیگابایت', quota: 5e9, price: 49_900, fw: 3 },
+  p20g: { title: '۲۰ گیگابایت', quota: 20e9, price: 149_000, fw: 2, badge: '⭐ محبوب‌ترین' },
+  p50g: { title: '۵۰ گیگابایت', quota: 50e9, price: 299_000, fw: 1, badge: '💎 به‌صرفه‌ترین' },
 };
 const PLAN_ORDER = ['free', 'p500', 'p1g', 'p5g', 'p20g', 'p50g']; // for upgrade/downgrade checks
-const SALE = ['p1g', 'p5g', 'p20g', 'p50g'];                        // plans that can be bought or gifted
+const SALE = ['p1g', 'p5g', 'p20g', 'p50g'];
+// Arvan cost per GB incl. 10% VAT (toman): storage per month, download traffic.
+const ARVAN_STORE_GB = 3960;
+const ARVAN_TRAFFIC_GB = 1062;
+const PERIODS = [1, 3, 6, 12];                                      // months
+const PERIOD_TITLE = { 1: 'یک ماهه', 3: 'سه ماهه', 6: 'شش ماهه', 12: 'یک ساله' };                        // plans that can be bought or gifted
 const PLAN_ALIAS = { '1': 'p1g', '1g': 'p1g', p1g: 'p1g', '5': 'p5g', '5g': 'p5g', p5g: 'p5g',
   '20': 'p20g', '20g': 'p20g', p20g: 'p20g', '50': 'p50g', '50g': 'p50g', p50g: 'p50g' };
 const ACTIVE = `('ready','uploading','queued','waiting_helper','helper_uploading')`;
@@ -179,12 +185,15 @@ export class Store extends DurableObject {
       CREATE TABLE IF NOT EXISTS tv_pairs(code TEXT PRIMARY KEY, created_at INTEGER NOT NULL, user_id INTEGER);
       CREATE TABLE IF NOT EXISTS seen2(id TEXT PRIMARY KEY, at INTEGER);
       CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
+      CREATE TABLE IF NOT EXISTS support(admin_msg_id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, created_at INTEGER);
     `);
     this.addCols('files', { owner: 'INTEGER', storage: "TEXT NOT NULL DEFAULT 'do'", obj_key: 'TEXT', thumb_key: 'TEXT' });
     this.addCols('users', {
       up_month: 'TEXT', up_used: 'INTEGER NOT NULL DEFAULT 0',
       watch_month: 'TEXT', watch_used: 'INTEGER NOT NULL DEFAULT 0', watch_warned: 'INTEGER NOT NULL DEFAULT 0',
     });
+    this.addCols('payments', { months: 'INTEGER NOT NULL DEFAULT 1' });
+    this.addCols('support', { answered_at: 'INTEGER' });
     this.addCols('devices', { manifest_at: 'INTEGER', rep_month: 'TEXT', rep_bytes: 'INTEGER NOT NULL DEFAULT 0' });
     this.sql.exec('UPDATE files SET owner=? WHERE owner IS NULL', Number(env.OWNER_ID));
     this.sql.exec('CREATE INDEX IF NOT EXISTS files_owner ON files(owner, created_at)');
@@ -212,11 +221,32 @@ export class Store extends DurableObject {
     if (v != null) return v;
     return ({
       card_number: this.env.CARD_NUMBER, card_name: this.env.CARD_NAME, card_bank: this.env.CARD_BANK,
-      mult: '20',
+      mult_up: '10',
+      ...Object.fromEntries(Object.keys(PLANS).map((k) => ['fw_' + k, String(PLANS[k].fw)])),
       ...Object.fromEntries(SALE.map((k) => ['price_' + k, String(PLANS[k].price)])),
+      disc_3: '5', disc_6: '10', disc_12: '15',
     })[key] ?? null;
   }
   price(plan) { return Number(this.setting('price_' + plan)) || 0; }
+  fairWatch(plan) { return Number(this.setting('fw_' + plan)) || PLANS[plan]?.fw || 3; }
+  discount(months) { return months === 1 ? 0 : Math.min(90, Number(this.setting('disc_' + months)) || 0); }
+  // Worst-case Arvan cost of a plan per month (full storage + full viewing cap) plus a 5% safety margin.
+  floorMonthly(plan) {
+    const gb = PLANS[plan].quota / 1e9;
+    return gb * (ARVAN_STORE_GB + this.fairWatch(plan) * ARVAN_TRAFFIC_GB) * 1.05;
+  }
+  // Psychological price: nearest amount ending in 9,000 (189,000 rather than 190,000).
+  charm(x) { return x < 100_000 ? Math.max(4900, Math.round((x + 100) / 1000) * 1000 - 100) : Math.round((x + 1000) / 10000) * 10000 - 1000; }
+  // Total for a period. Discounts never push the price below the worst-case cost.
+  priceFor(plan, months) {
+    const base = this.price(plan) * months;
+    if (months === 1) return this.price(plan);
+    const min = this.floorMonthly(plan) * months;
+    let total = this.charm(base * (1 - this.discount(months) / 100));
+    while (total < min) total += total < 100_000 ? 1000 : 10000;
+    return Math.min(total, base);
+  }
+  savedPct(plan, months) { return Math.max(0, Math.floor((1 - this.priceFor(plan, months) / (this.price(plan) * months)) * 100)); }
 
   isAdmin(id) { return String(id) === String(this.env.OWNER_ID); }
   totalUsed() { return this.one(`SELECT COALESCE(SUM(size),0) AS s FROM files WHERE status IN ${ACTIVE}`).s; }
@@ -227,8 +257,8 @@ export class Store extends DurableObject {
   limits(u) {
     if (this.isAdmin(u.id)) return { plan: 'admin', title: 'مدیر', quota: Infinity, upCap: Infinity, watchCap: Infinity };
     const p = PLANS[u.plan] || PLANS.free;
-    const mult = Number(this.setting('mult')) || 20;
-    return { plan: u.plan, title: p.title, quota: p.quota, upCap: p.quota * mult, watchCap: p.quota * mult };
+    const up = Number(this.setting('mult_up')) || 10;
+    return { plan: u.plan, title: p.title, quota: p.quota, upCap: p.quota * up, watchCap: p.quota * this.fairWatch(u.plan) };
   }
   monthUsage(u) {
     const mk = monthKey();
@@ -440,6 +470,7 @@ export class Store extends DurableObject {
       if (user.state) this.setState(user.id, null);
       return this.onCommand(m, user, cmd[1].toLowerCase(), cmd[2].trim());
     }
+    if (user.state === 'support') return this.onSupportMessage(m, user);
     if (user.state?.startsWith('receipt:') && (m.photo || m.document)) return this.onReceipt(m, user, user.state.slice(8));
     if (user.state === 'gift' && text) { this.setState(user.id, null); return this.redeem(m.chat.id, user, text); }
     if (user.state === 'tv' && text) { this.setState(user.id, null); return this.linkTv(m.chat.id, user, text); }
@@ -468,6 +499,8 @@ export class Store extends DurableObject {
       return this.send(chat, '🎁 کد هدیه را بفرستید:');
     }
     if (name === 'tv') return arg ? this.linkTv(chat, user, arg) : this.sendTvStatus(chat, user);
+    if (name === 'app' || name === 'install') return this.sendApp(chat);
+    if (name === 'support' || name === 'help') return this.supportStart(chat, user);
     return this.sendMenu(chat, user);
   }
 
@@ -476,6 +509,7 @@ export class Store extends DurableObject {
       [{ text: '📦 خرید یا تمدید اشتراک', callback_data: 'b' }],
       [{ text: '📂 فایل‌های من', callback_data: 'l:0' }, { text: '👤 حساب من', callback_data: 'a' }],
       [{ text: '🎁 کد هدیه', callback_data: 'g' }, { text: '📺 تلویزیون', callback_data: 't' }],
+      [{ text: '📲 دریافت اپ تلویزیون', callback_data: 'app' }, { text: '💬 پشتیبانی', callback_data: 'sup' }],
     ];
   }
 
@@ -484,7 +518,7 @@ export class Store extends DurableObject {
     if (welcome) {
       head = `👋 سلام ${esc(user.first_name || '')}! به <b>TeleTVShare</b> خوش آمدید.\nهر فایلی (ویدیو، عکس، صوت، سند) اینجا بفرستید، روی تلویزیون شما نمایش داده می‌شود.\n\n`;
       if (user._welcomed) head += `🎁 هدیه عضویت: <b>${PLANS[WELCOME.plan].title} رایگان برای ${faNum(WELCOME.days)} روز</b>!\n\n`;
-      head += '📺 برای اتصال تلویزیون، اپ TeleTVShare را روی تلویزیون باز کنید و QR روی صفحه را با گوشی اسکن کنید.\n\n';
+      head += '📺 اپ TeleTVShare را از دکمه «📲 دریافت اپ تلویزیون» بگیرید، روی تلویزیون نصب کنید و QR روی صفحه را با گوشی اسکن کنید.\n\n';
     }
     return this.send(chat, head + this.accountText(user), this.menuKeyboard());
   }
@@ -497,10 +531,6 @@ export class Store extends DurableObject {
     const lines = [`👤 پلن: <b>${lim.title}</b>`];
     if (user.expires_at && user.plan !== 'free') lines.push(`⏳ اعتبار تا ${fmtDate(user.expires_at, false)}`);
     lines.push(`💾 فضا: ${bar(pctOf(used, lim.quota))} ${fmtSize(used)} از ${fmtSize(lim.quota)}`);
-    if (Number.isFinite(lim.upCap)) {
-      lines.push(`⬆️ آپلود این ماه: ${fmtSize(mu.up)} از ${fmtSize(lim.upCap)}`);
-      lines.push(`📺 تماشای این ماه: ${fmtSize(mu.watch)} از ${fmtSize(lim.watchCap)}`);
-    }
     const tv = this.one('SELECT name FROM devices WHERE user_id=?', user.id);
     lines.push(`📺 تلویزیون: ${tv ? 'وصل است' : 'وصل نیست'}`);
     if (user.grace_until) lines.push(`\n⚠️ اشتراک شما تمام شده؛ فایل‌های بیش از ${fmtSize(lim.quota)} تا ${fmtDate(user.grace_until)} پاک می‌شوند مگر اینکه تمدید کنید.`);
@@ -514,12 +544,13 @@ export class Store extends DurableObject {
 
   // ---- plans & payment
   plansText(user) {
-    const mult = Number(this.setting('mult')) || 20;
-    const lines = ['📦 <b>اشتراک‌های ماهانه TeleTVShare</b>', ''];
+    const lines = ['📦 <b>اشتراک‌های TeleTVShare</b>', ''];
     for (const k of SALE) {
-      lines.push(`• <b>${PLANS[k].title}</b> فضا — ${faNum(this.price(k))} تومان در ماه`);
+      const perGb = Math.round(this.price(k) / (PLANS[k].quota / 1e9) / 100) * 100;
+      lines.push(`• <b>${PLANS[k].title}</b> — ${faNum(this.price(k))} تومان در ماه${PLANS[k].badge ? `  ${PLANS[k].badge}` : ''}\n   ↳ هر گیگ فقط ${faNum(perGb)} تومان`);
     }
-    lines.push('', `آپلود و تماشای ماهانه هر پلن تا ${faNum(mult)} برابر فضای آن است.`, `پلن فعلی شما: ${this.limits(user).title}`);
+    lines.push('', '🎁 خرید ۳، ۶ و ۱۲ ماهه تخفیف بیشتری دارد؛ بعد از انتخاب پلن، قیمت هر دوره را می‌بینید.',
+      `پلن فعلی شما: ${this.limits(user).title}`);
     return lines.join('\n');
   }
 
@@ -529,17 +560,36 @@ export class Store extends DurableObject {
     const rows = SALE
       .filter((k) => !active || PLAN_ORDER.indexOf(k) >= cur)
       .map((k) => [{
-        text: `${k === user.plan && active ? '🔄 تمدید' : '🛒'} ${PLANS[k].title} — ${faNum(this.price(k))} تومان`,
+        text: `${k === user.plan && active ? '🔄 تمدید' : PLANS[k].badge ? PLANS[k].badge.split(' ')[0] : '🛒'} ${PLANS[k].title} — ${faNum(this.price(k))} تومان/ماه`,
         callback_data: `B:${k}`,
       }]);
     rows.push([{ text: '🎁 کد هدیه دارم', callback_data: 'g' }]);
     return rows;
   }
 
-  paymentText(plan) {
+  periodText(plan) {
+    return [`🛒 اشتراک <b>${PLANS[plan].title}</b>${PLANS[plan].badge ? ` — ${PLANS[plan].badge}` : ''}`, '', 'مدت اشتراک را انتخاب کنید (دوره‌های طولانی‌تر ارزان‌ترند):'].join('\n');
+  }
+
+  periodKeyboard(plan) {
     return [
-      `🛒 اشتراک <b>${PLANS[plan].title}</b> — یک ماه`,
-      `💳 مبلغ: <b>${faNum(this.price(plan))} تومان</b>`,
+      ...PERIODS.map((n) => {
+        const d = this.savedPct(plan, n);
+        const total = this.priceFor(plan, n);
+        const monthly = n > 1 ? ` (ماهی ${faNum(Math.round(total / n / 100) * 100)})` : '';
+        return [{ text: `${PERIOD_TITLE[n]} — ${faNum(total)} تومان${d ? ` · ${faNum(d)}٪ تخفیف` : ''}${monthly}`, callback_data: `BD:${plan}:${n}` }];
+      }),
+      [{ text: '↩️ پلن‌های دیگر', callback_data: 'b' }],
+    ];
+  }
+
+  paymentText(plan, months = 1) {
+    const full = this.price(plan) * months;
+    const total = this.priceFor(plan, months);
+    return [
+      `🛒 اشتراک <b>${PLANS[plan].title}</b> — ${PERIOD_TITLE[months]}`,
+      `💳 مبلغ قابل پرداخت: <b>${faNum(total)} تومان</b>`,
+      ...(full > total ? [`<s>${faNum(full)} تومان</s> — ${faNum(full - total)} تومان صرفه‌جویی`] : []),
       '',
       `شماره کارت: <code>${esc(this.setting('card_number'))}</code>`,
       `به نام: ${esc(this.setting('card_name'))} — ${esc(this.setting('card_bank'))}`,
@@ -549,13 +599,15 @@ export class Store extends DurableObject {
     ].join('\n');
   }
 
-  async onReceipt(m, user, plan) {
+  async onReceipt(m, user, spec) {
+    const [plan, mStr] = spec.split(':');
+    const months = PERIODS.includes(Number(mStr)) ? Number(mStr) : 1;
     if (!SALE.includes(plan)) return;
     this.setState(user.id, null);
     const isPhoto = !!m.photo;
     const fileId = isPhoto ? m.photo[m.photo.length - 1].file_id : m.document.file_id;
-    this.sql.exec(`INSERT INTO payments(user_id, plan, amount, status, file_id, is_photo, created_at)
-      VALUES (?,?,?,?,?,?,?)`, user.id, plan, this.price(plan), 'pending', fileId, isPhoto ? 1 : 0, Date.now());
+    this.sql.exec(`INSERT INTO payments(user_id, plan, amount, status, file_id, is_photo, created_at, months)
+      VALUES (?,?,?,?,?,?,?,?)`, user.id, plan, this.priceFor(plan, months), 'pending', fileId, isPhoto ? 1 : 0, Date.now(), months);
     const pay = this.one('SELECT * FROM payments WHERE id=last_insert_rowid()');
     await this.sendReceiptToAdmin(pay, user);
     return this.send(m.chat.id, '🧾 رسید دریافت شد. پس از بررسی (معمولاً چند دقیقه) اشتراک شما فعال می‌شود و همین‌جا خبرتان می‌کنم.', null, m.message_id);
@@ -590,7 +642,7 @@ export class Store extends DurableObject {
     return [
       `🧾 <b>رسید پرداخت #${pay.id}</b>`,
       `👤 ${who} — <code>${user.id}</code>`,
-      `📦 پلن: ${PLANS[pay.plan].title}`,
+      `📦 پلن: ${PLANS[pay.plan].title} — ${PERIOD_TITLE[pay.months || 1]}`,
       `💳 مبلغ: ${faNum(pay.amount)} تومان`,
       `🕓 ${fmtDate(pay.created_at)}`,
     ].join('\n');
@@ -651,12 +703,144 @@ export class Store extends DurableObject {
     await this.s3del(`r/${d.token}.json`);
   }
 
+  // ---- TV app distribution: the APK lives on Arvan (app/TeleTVShare.apk), sent in Telegram on request
+  appInfo() {
+    const key = this.meta('app_key');
+    return key ? { key, url: this.publicUrl(key), size: Number(this.meta('app_size') || 0), version: this.meta('app_version') || '', at: Number(this.meta('app_at') || 0) } : null;
+  }
+
+  installGuide(app) {
+    return [
+      '📺 <b>نصب اپ TeleTVShare روی تلویزیون اندروید</b>',
+      '',
+      '<b>روش ۱ — مستقیم روی تلویزیون (پیشنهادی)</b>',
+      '۱. روی تلویزیون از Google Play برنامه <b>Downloader</b> (سازنده: AFTVnews) را نصب کنید.',
+      '۲. در تنظیمات تلویزیون: Settings ← Device Preferences ← Security & restrictions ← <b>Unknown sources</b> و Downloader را روشن کنید.',
+      '۳. Downloader را باز کنید و این آدرس را در کادر آن بنویسید:',
+      `<code>${esc(app.url)}</code>`,
+      '۴. بعد از دانلود، <b>Install</b> را بزنید.',
+      '',
+      '<b>روش ۲ — از گوشی</b>',
+      '۱. فایل APK همین پیام را در تلگرام دانلود کنید.',
+      '۲. برنامه <b>Send Files to TV</b> را روی گوشی و تلویزیون نصب کنید و فایل را به تلویزیون بفرستید (یا روی فلش بریزید و با فایل‌منیجر تلویزیون باز کنید).',
+      '۳. روی تلویزیون فایل را باز کنید و Install را بزنید (اگر خواست، اجازه نصب از منابع ناشناس را بدهید).',
+      '',
+      '<b>بعد از نصب:</b> اپ را باز کنید؛ یک کد و QR نشان می‌دهد. QR را با دوربین گوشی اسکن کنید یا کد را در همین بات از «📺 تلویزیون» بفرستید.',
+      '',
+      'دانلود و تماشا روی تلویزیون در ایران بدون VPN کار می‌کند.',
+    ].join('\n');
+  }
+
+  async sendApp(chat) {
+    const app = this.appInfo();
+    if (!app) return this.send(chat, '📲 اپ تلویزیون TeleTVShare به‌زودی منتشر می‌شود. همین‌جا خبرتان می‌کنیم.', this.menuKeyboard());
+    const caption = `📲 <b>TeleTVShare برای تلویزیون اندروید</b>${app.version ? ` — نسخه ${esc(app.version)}` : ''}\n${fmtSize(app.size)} — راهنمای نصب در پیام بعدی 👇`;
+    const cached = this.meta('app_file_id');
+    let r = await this.tg('sendDocument', { chat_id: chat, document: cached || app.url, caption, parse_mode: 'HTML' });
+    if (!r.ok && cached) {
+      this.meta('app_file_id', null);
+      r = await this.tg('sendDocument', { chat_id: chat, document: app.url, caption, parse_mode: 'HTML' });
+    }
+    if (r.ok && r.result?.document?.file_id) this.meta('app_file_id', r.result.document.file_id);
+    return this.send(chat, this.installGuide(app), [[{ text: '📺 اتصال تلویزیون', callback_data: 't' }]]);
+  }
+
+  // Admin sends an .apk to the admin bot -> stored on Arvan and offered to users.
+  async publishApp(chat, doc, caption) {
+    const A = (t) => this.send(chat, t, null, null, 'admin');
+    if (doc.file_size > TG_BOT_MAX) return A('❌ فایل APK باید کمتر از ۲۰ مگابایت باشد.');
+    const gf = await this.tg('getFile', { file_id: doc.file_id }, 'admin');
+    if (!gf.ok) return A(`❌ دریافت فایل ناموفق بود: ${esc(gf.description)}`);
+    const res = await fetch(`https://api.telegram.org/file/bot${this.env.ADMIN_BOT_TOKEN}/${gf.result.file_path}`);
+    const buf = await res.arrayBuffer();
+    const key = 'app/TeleTVShare.apk';
+    await this.s3put(key, buf, {
+      type: 'application/vnd.android.package-archive', cache: 'no-cache, max-age=0',
+      disposition: 'attachment; filename="TeleTVShare.apk"',
+    });
+    const version = String(caption || '').trim().slice(0, 20);
+    this.meta('app_key', key);
+    this.meta('app_size', buf.byteLength);
+    this.meta('app_version', version || null);
+    this.meta('app_at', Date.now());
+    this.meta('app_file_id', null);
+    return A(`✅ اپ تلویزیون منتشر شد${version ? ` (نسخه ${esc(version)})` : ''} — ${fmtSize(buf.byteLength)}\nکاربران از دکمه «📲 دریافت اپ تلویزیون» در @${this.env.BOT_USERNAME} آن را می‌گیرند.\nلینک مستقیم: ${esc(this.publicUrl(key))}`);
+  }
+
+  // ---- support: user messages go to the admin bot; the admin's reply goes back through the main bot
+  async supportStart(chat, user) {
+    this.setState(user.id, 'support');
+    return this.send(chat, '💬 <b>پشتیبانی TeleTVShare</b>\nسؤال یا مشکل خود را بنویسید (می‌توانید عکس هم بفرستید). پاسخ همین‌جا برایتان می‌آید.',
+      [[{ text: '✅ پایان گفتگو', callback_data: 'se_end' }]]);
+  }
+
+  // Copy a file sent to one bot into a chat of the other bot (file ids are per bot).
+  async relayMedia(fromBot, toBot, chatId, fileId, isPhoto, caption, keyboard) {
+    const gf = await this.tg('getFile', { file_id: fileId }, fromBot);
+    const form = new FormData();
+    form.set('chat_id', String(chatId));
+    form.set('caption', caption.slice(0, 1000));
+    form.set('parse_mode', 'HTML');
+    if (keyboard) form.set('reply_markup', JSON.stringify({ inline_keyboard: keyboard }));
+    let method = 'sendMessage';
+    if (gf.ok && (gf.result.file_size || 0) <= TG_BOT_MAX) {
+      const res = await fetch(`https://api.telegram.org/file/bot${this.token(fromBot)}/${gf.result.file_path}`);
+      method = isPhoto ? 'sendPhoto' : 'sendDocument';
+      form.set(isPhoto ? 'photo' : 'document', await res.blob(), isPhoto ? 'photo.jpg' : (gf.result.file_path.split('/').pop() || 'file'));
+    } else {
+      form.set('text', caption + '\n(فایل پیوست قابل انتقال نبود)');
+    }
+    this.sub = (this.sub || 0) + 1;
+    const r = await fetch(`https://api.telegram.org/bot${this.token(toBot)}/${method}`, { method: 'POST', body: form });
+    return r.json().catch(() => ({ ok: false }));
+  }
+
+  async onSupportMessage(m, user) {
+    const who = `${esc(user.first_name || '')}${user.username ? ` @${esc(user.username)}` : ''} — <code>${user.id}</code>`;
+    const lim = this.limits(user);
+    const head = `💬 <b>پیام پشتیبانی</b>\n👤 ${who}\n📦 ${lim.title}\n\n`;
+    const kb = [[{ text: '👤 پروفایل کاربر', callback_data: `uv:${user.id}` }]];
+    const body = esc(m.text || m.caption || '');
+    let sent;
+    if (m.photo || m.document) {
+      const fileId = m.photo ? m.photo[m.photo.length - 1].file_id : m.document.file_id;
+      sent = await this.relayMedia('main', 'admin', this.env.OWNER_ID, fileId, !!m.photo, head + body, kb);
+    } else if (m.text) {
+      sent = await this.send(Number(this.env.OWNER_ID), head + body + '\n\n↩️ برای پاسخ، روی همین پیام Reply بزنید.', kb, null, 'admin');
+    } else {
+      return this.send(m.chat.id, 'فقط متن، عکس یا فایل قابل ارسال است.');
+    }
+    if (sent?.ok) {
+      this.sql.exec('INSERT OR REPLACE INTO support(admin_msg_id, user_id, created_at) VALUES (?,?,?)', sent.result.message_id, user.id, Date.now());
+    }
+    return this.send(m.chat.id, sent?.ok ? '✅ پیام شما به پشتیبانی رسید. پاسخ همین‌جا می‌آید.' : '❌ ارسال پیام ناموفق بود؛ کمی بعد دوباره امتحان کنید.',
+      [[{ text: '✅ پایان گفتگو', callback_data: 'se_end' }]], m.message_id);
+  }
+
+  // Admin replied (Telegram "Reply") to a support message in the admin bot.
+  async onSupportReply(m) {
+    const row = this.one('SELECT * FROM support WHERE admin_msg_id=?', m.reply_to_message.message_id);
+    if (!row) return false;
+    const head = '💬 <b>پاسخ پشتیبانی</b>\n\n';
+    const kb = [[{ text: '💬 ادامه گفتگو', callback_data: 'sup' }]];
+    let r;
+    if (m.photo || m.document) {
+      const fileId = m.photo ? m.photo[m.photo.length - 1].file_id : m.document.file_id;
+      r = await this.relayMedia('admin', 'main', row.user_id, fileId, !!m.photo, head + esc(m.caption || ''), kb);
+    } else {
+      r = await this.send(row.user_id, head + esc(m.text || ''), kb);
+    }
+    if (r?.ok) this.sql.exec('UPDATE support SET answered_at=? WHERE admin_msg_id=?', Date.now(), row.admin_msg_id);
+    await this.send(m.chat.id, r?.ok ? '✅ پاسخ برای کاربر فرستاده شد.' : `❌ ارسال نشد: ${esc(r?.description || 'خطا')}`, null, m.message_id, 'admin');
+    return true;
+  }
+
   tvStatus(user) {
     const d = this.one('SELECT * FROM devices WHERE user_id=?', user.id);
     if (!d) {
       return {
         text: '📺 هیچ تلویزیونی به حساب شما وصل نیست.\n\nاپ TeleTVShare را روی تلویزیون باز کنید؛ یک کد ۸ حرفی و QR نشان می‌دهد. QR را با دوربین گوشی اسکن کنید یا کد را همین‌جا بفرستید.\n\nهر حساب فقط روی یک تلویزیون کار می‌کند.',
-        kb: [[{ text: '🔢 وارد کردن کد تلویزیون', callback_data: 'tc' }]],
+        kb: [[{ text: '🔢 وارد کردن کد تلویزیون', callback_data: 'tc' }], [{ text: '📲 دریافت اپ و راهنمای نصب', callback_data: 'app' }]],
       };
     }
     return {
@@ -710,7 +894,7 @@ export class Store extends DurableObject {
     }
     const mu = this.monthUsage(user);
     if (mu.up + media.size > lim.upCap) {
-      return this.send(m.chat.id, `❌ سقف آپلود ماهانه شما (${fmtSize(lim.upCap)}) پر شده است. ${fmtSize(mu.up)} در این ماه آپلود کرده‌اید.`, kb, m.message_id);
+      return this.send(m.chat.id, '⚠️ به سقف <b>مصرف منصفانه</b> آپلود این ماه رسیده‌اید. از اول ماه بعد یا با ارتقای اشتراک می‌توانید دوباره فایل بفرستید.', kb, m.message_id);
     }
     const id = randomId();
     const status = media.size > this.freeFor(user) ? 'waiting_space' : media.size > TG_BOT_MAX ? 'waiting_helper' : 'queued';
@@ -824,13 +1008,22 @@ export class Store extends DurableObject {
       case 'b': await this.send(chatId, this.plansText(user), this.plansKeyboard(user)); return answer();
       case 'B': {
         if (!SALE.includes(a)) return answer();
-        this.setState(user.id, `receipt:${a}`);
-        await this.send(chatId, this.paymentText(a), [[{ text: '❌ انصراف', callback_data: 'bc' }]]);
+        await this.send(chatId, this.periodText(a), this.periodKeyboard(a));
+        return answer();
+      }
+      case 'BD': {
+        const months = Number(b);
+        if (!SALE.includes(a) || !PERIODS.includes(months)) return answer();
+        this.setState(user.id, `receipt:${a}:${months}`);
+        await this.edit(chatId, msgId, this.paymentText(a, months), [[{ text: '❌ انصراف', callback_data: 'bc' }]]);
         return answer();
       }
       case 'bc': this.setState(user.id, null); await this.edit(chatId, msgId, 'خرید لغو شد.', this.menuKeyboard()); return answer();
       case 'g': this.setState(user.id, 'gift'); await this.send(chatId, '🎁 کد هدیه را بفرستید:'); return answer();
       case 't': { const v = this.tvStatus(user); await this.send(chatId, v.text, v.kb); return answer(); }
+      case 'app': await this.sendApp(chatId); return answer();
+      case 'sup': await this.supportStart(chatId, user); return answer();
+      case 'se_end': this.setState(user.id, null); await this.send(chatId, 'گفتگو با پشتیبانی بسته شد. هر وقت سؤالی داشتید، دوباره «💬 پشتیبانی» را بزنید.', this.menuKeyboard()); return answer();
       case 'tc': this.setState(user.id, 'tv'); await this.send(chatId, '🔢 کد ۸ حرفی که روی صفحه تلویزیون است را بفرستید:'); return answer();
       case 'tu': {
         const d = this.one('SELECT * FROM devices WHERE user_id=?', user.id);
@@ -909,6 +1102,8 @@ export class Store extends DurableObject {
     if (u.callback_query) return this.onAdminCallback(u.callback_query);
     const m = u.message;
     const chat = m.chat.id;
+    if (m.reply_to_message && await this.onSupportReply(m)) return;
+    if (m.document && /\.apk$/i.test(m.document.file_name || '')) return this.publishApp(chat, m.document, m.caption);
     const text = (m.text || '').trim();
     const cmd = /^\/(\w+)(?:@\w+)?\s*(.*)$/s.exec(text);
     const state = this.meta('admin_state');
@@ -948,6 +1143,12 @@ export class Store extends DurableObject {
     if (name === 'delgift') { this.sql.exec('DELETE FROM gift_codes WHERE code=?', arg.toUpperCase()); return A('کد حذف شد.'); }
     if (name === 'payments' || name === 'receipts') return A(this.paymentsText(), this.pendingKeyboard());
     if (name === 'settings') return A(this.settingsText(), this.settingsKeyboard());
+    if (name === 'unpublishapp') {
+      const app = this.appInfo();
+      if (app) await this.s3del(app.key);
+      for (const k of ['app_key', 'app_size', 'app_version', 'app_at', 'app_file_id']) this.meta(k, null);
+      return A('اپ تلویزیون از دسترس خارج شد.');
+    }
     return A(this.adminHelp(), this.adminMenu());
   }
 
@@ -1074,7 +1275,7 @@ export class Store extends DurableObject {
   paymentsText() {
     const rows = this.q(`SELECT p.*, u.first_name FROM payments p LEFT JOIN users u ON u.id=p.user_id ORDER BY p.created_at DESC LIMIT 20`);
     return rows.length
-      ? '🧾 <b>آخرین پرداخت‌ها</b>\n\n' + rows.map((p) => `#${p.id} ${({ pending: '⏳', approved: '✅', rejected: '❌' })[p.status]} ${esc(p.first_name)} — ${PLANS[p.plan].title} — ${faNum(p.amount)} — ${fmtDate(p.created_at)}`).join('\n')
+      ? '🧾 <b>آخرین پرداخت‌ها</b>\n\n' + rows.map((p) => `#${p.id} ${({ pending: '⏳', approved: '✅', rejected: '❌' })[p.status]} ${esc(p.first_name)} — ${PLANS[p.plan].title} ${PERIOD_TITLE[p.months || 1]} — ${faNum(p.amount)} — ${fmtDate(p.created_at)}`).join('\n')
       : 'هنوز پرداختی ثبت نشده.';
   }
 
@@ -1084,25 +1285,32 @@ export class Store extends DurableObject {
   }
 
   settingsText() {
-    const mult = this.setting('mult');
     return [
       '⚙️ <b>تنظیمات</b>',
       `💳 شماره کارت: <code>${esc(this.setting('card_number'))}</code>`,
       `👤 به نام: ${esc(this.setting('card_name'))}`,
       `🏦 بانک: ${esc(this.setting('card_bank'))}`,
       '',
-      ...SALE.map((k) => `📦 ${PLANS[k].title}: ${faNum(this.price(k))} تومان`),
+      ...SALE.map((k) => `📦 ${PLANS[k].title}: ${faNum(this.price(k))} تومان — بدترین هزینه آروان ${faNum(Math.round(this.floorMonthly(k) / 1.05 / 1000) * 1000)}${this.price(k) < this.floorMonthly(k) ? ' ⚠️ ضررده!' : ' ✅'}`),
       '',
-      `📈 سقف آپلود و تماشای ماهانه: ${faNum(mult)} برابر فضای پلن`,
+      `🏷 تخفیف خرید چندماهه: ۳ ماهه ${faNum(this.discount(3))}٪ — ۶ ماهه ${faNum(this.discount(6))}٪ — یک ساله ${faNum(this.discount(12))}٪`,
+      `⬆️ مصرف منصفانه آپلود: ${faNum(Number(this.setting('mult_up')))} برابر فضای پلن (برای شما هزینه‌ای ندارد)`,
+      `📺 مصرف منصفانه تماشا (به کاربر نشان داده نمی‌شود): ${SALE.map((k) => `${PLANS[k].title.split(' ')[0]} گیگ ${faNum(this.fairWatch(k))}×`).join('، ')}`,
+      '',
+      this.appInfo() ? `📲 اپ تلویزیون: منتشر شده ${this.meta('app_version') ? `(نسخه ${esc(this.meta('app_version'))}) ` : ''}— ${fmtDate(Number(this.meta('app_at')))}` : '📲 اپ تلویزیون: هنوز منتشر نشده',
+      'برای انتشار نسخه جدید، فایل APK را همین‌جا بفرستید (در کپشن می‌توانید شماره نسخه بنویسید).',
     ].join('\n');
   }
 
   settingsKeyboard() {
     return [
       [{ text: '💳 شماره کارت', callback_data: 'se:card_number' }, { text: '👤 نام صاحب کارت', callback_data: 'se:card_name' }],
-      [{ text: '🏦 بانک', callback_data: 'se:card_bank' }, { text: '📈 ضریب سقف ماهانه', callback_data: 'se:mult' }],
+      [{ text: '🏦 بانک', callback_data: 'se:card_bank' }],
+      [{ text: '⬆️ منصفانه آپلود', callback_data: 'se:mult_up' }],
+      SALE.map((k) => ({ text: `📺 منصفانه ${PLANS[k].title.split(' ')[0]}G`, callback_data: `se:fw_${k}` })),
       SALE.slice(0, 2).map((k) => ({ text: `قیمت ${PLANS[k].title}`, callback_data: `se:price_${k}` })),
       SALE.slice(2).map((k) => ({ text: `قیمت ${PLANS[k].title}`, callback_data: `se:price_${k}` })),
+      [3, 6, 12].map((n) => ({ text: `تخفیف ${PERIOD_TITLE[n]}`, callback_data: `se:disc_${n}` })),
     ];
   }
 
@@ -1111,7 +1319,11 @@ export class Store extends DurableObject {
       card_number: 'شماره کارت جدید را بفرستید (۱۶ رقم):',
       card_name: 'نام صاحب کارت را بفرستید:',
       card_bank: 'نام بانک را بفرستید:',
-      mult: 'ضریب سقف آپلود و تماشای ماهانه را بفرستید (مثلاً ۲۰):',
+      mult_up: 'ضریب مصرف منصفانه آپلود ماهانه را بفرستید (مثلاً ۱۰ یعنی ۱۰ برابر فضای پلن):',
+      ...Object.fromEntries(SALE.map((k) => ['fw_' + k, `ضریب مصرف منصفانه تماشای ماهانه پلن ${PLANS[k].title} را بفرستید (مثلاً ۲ یعنی ۲ برابر فضای پلن). کمتر = قیمت‌گذاری امن‌تر:`])),
+      disc_3: 'درصد تخفیف خرید ۳ ماهه را بفرستید (۰ تا ۹۰):',
+      disc_6: 'درصد تخفیف خرید ۶ ماهه را بفرستید (۰ تا ۹۰):',
+      disc_12: 'درصد تخفیف خرید یک ساله را بفرستید (۰ تا ۹۰):',
     })[key] || `قیمت جدید ${PLANS[key.replace('price_', '')]?.title || ''} را به تومان بفرستید:`;
   }
 
@@ -1121,7 +1333,10 @@ export class Store extends DurableObject {
     if (key === 'card_number') {
       v = v.replace(/[\s-]/g, '');
       if (!/^\d{16}$/.test(v)) return A('❌ شماره کارت باید ۱۶ رقم باشد. دوباره از تنظیمات امتحان کنید.', this.settingsKeyboard());
-    } else if (key === 'mult' || key.startsWith('price_')) {
+    } else if (key.startsWith('disc_')) {
+      v = v.replace(/[٪%\s]/g, '');
+      if (!/^\d+$/.test(v) || Number(v) > 90) return A('❌ یک عدد بین ۰ تا ۹۰ بفرستید.', this.settingsKeyboard());
+    } else if (key.startsWith('mult') || key.startsWith('price_') || key.startsWith('fw_')) {
       v = v.replace(/[,\s٬]/g, '');
       if (!/^\d+$/.test(v) || Number(v) <= 0) return A('❌ یک عدد مثبت بفرستید.', this.settingsKeyboard());
     } else if (!v || v.length > 60) {
@@ -1207,7 +1422,7 @@ export class Store extends DurableObject {
     const user = this.user(pay.user_id) || { id: pay.user_id };
     let result;
     if (approve) {
-      const exp = this.activatePlan(pay.user_id, pay.plan, 30);
+      const exp = this.activatePlan(pay.user_id, pay.plan, 30 * (pay.months || 1));
       if (!exp) return answer('کاربر الان پلن بزرگ‌تری دارد. اول پلنش را از /user عوض کنید.', true);
       this.sql.exec(`UPDATE payments SET status='approved', decided_at=? WHERE id=?`, Date.now(), id);
       result = `✅ تأیید شد — اعتبار تا ${fmtDate(exp, false)}`;
@@ -1216,7 +1431,7 @@ export class Store extends DurableObject {
     } else {
       this.sql.exec(`UPDATE payments SET status='rejected', decided_at=? WHERE id=?`, Date.now(), id);
       result = '❌ رد شد';
-      await this.send(pay.user_id, '❌ رسید شما تأیید نشد. اگر فکر می‌کنید اشتباهی رخ داده، دوباره از «خرید اشتراک» اقدام کنید و رسید درست را بفرستید.', this.menuKeyboard());
+      await this.send(pay.user_id, '❌ رسید شما تأیید نشد. اگر فکر می‌کنید اشتباهی رخ داده، از «💬 پشتیبانی» با ما در تماس باشید یا دوباره رسید درست را بفرستید.', this.menuKeyboard());
     }
     const caption = `${this.paymentCaption(pay, user)}\n\n${result}`;
     if (cb.message?.photo || cb.message?.document) {
@@ -1278,7 +1493,7 @@ export class Store extends DurableObject {
       `👤 <b>${esc(u.first_name)}</b>${u.username ? ` @${esc(u.username)}` : ''} — <code>${u.id}</code>`,
       `پلن: ${lim.title}${u.expires_at && u.plan !== 'free' ? ` تا ${fmtDate(u.expires_at, false)}` : ''}${u.banned ? ' — ⛔️ مسدود' : ''}`,
       `فضا: ${fmtSize(this.userUsed(uid))} از ${fmtSize(lim.quota)} — ${faNum(files)} فایل`,
-      `این ماه: آپلود ${fmtSize(mu.up)} از ${fmtSize(lim.upCap)} — تماشا ${fmtSize(mu.watch)} از ${fmtSize(lim.watchCap)}`,
+      `مصرف منصفانه این ماه: آپلود ${fmtSize(mu.up)} از ${fmtSize(lim.upCap)} — تماشا ${fmtSize(mu.watch)} از ${fmtSize(lim.watchCap)}`,
       `تلویزیون: ${tv ? `وصل از ${fmtDate(tv.created_at, false)}` : '—'}`,
       `مجموع پرداخت: ${faNum(paid)} تومان`,
       `عضویت: ${fmtDate(u.created_at, false)} — آخرین فعالیت: ${fmtDate(u.last_seen || u.created_at)}`,
@@ -1453,7 +1668,7 @@ export class Store extends DurableObject {
       if (watch >= lim.watchCap) {
         if (!this.user(u.id).watch_warned) {
           this.sql.exec('UPDATE users SET watch_warned=1 WHERE id=?', u.id);
-          await this.send(u.id, `📺 سقف تماشای ماهانه شما (${fmtSize(lim.watchCap)}) پر شد. تا اول ماه بعد یا با ارتقای اشتراک دوباره فعال می‌شود.`,
+          await this.send(u.id, '📺 به سقف <b>مصرف منصفانه</b> تماشای این ماه رسیده‌اید. از اول ماه بعد یا با ارتقای اشتراک دوباره فعال می‌شود.',
             [[{ text: '📦 ارتقای اشتراک', callback_data: 'b' }]]);
         }
         await this.writeManifest(u.id);
@@ -1548,13 +1763,14 @@ export class Store extends DurableObject {
       try { return Response.json(await this.migrateOne()); } catch (e) { return Response.json({ error: String(e.stack || e) }, { status: 500 }); }
     }
     if (p === '/api/admin/payments') return Response.json(this.q('SELECT * FROM payments ORDER BY id'));
+    if (p === '/api/admin/support') return Response.json(this.q('SELECT * FROM support ORDER BY created_at'));
     if (p === '/api/admin/gifts') return Response.json(this.q('SELECT * FROM gift_codes ORDER BY created_at'));
     if (p === '/api/admin/settings' && req.method === 'PATCH') {
       const b = await req.json();
       for (const [k, v] of Object.entries(b)) this.meta('set_' + k, v == null ? null : String(v));
     }
     if (p === '/api/admin/settings') return Response.json(Object.fromEntries(
-      ['card_number', 'card_name', 'card_bank', 'mult', ...SALE.map((k) => 'price_' + k)].map((k) => [k, this.setting(k)])));
+      ['card_number', 'card_name', 'card_bank', 'mult_up', ...SALE.map((k) => 'fw_' + k), 'disc_3', 'disc_6', 'disc_12', ...SALE.map((k) => 'price_' + k)].map((k) => [k, this.setting(k)])));
     return Response.json({ error: 'not found' }, { status: 404 });
   }
 
