@@ -47,6 +47,7 @@ class PairActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         if (Prefs.manifest(this) != null) return
+        Updater.checkForUpdate(this)
         job = lifecycleScope.launch {
             val codeView = findViewById<TextView>(R.id.code)
             val qr = findViewById<ImageView>(R.id.qr)

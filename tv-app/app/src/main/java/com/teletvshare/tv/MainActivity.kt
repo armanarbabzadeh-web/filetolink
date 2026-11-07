@@ -63,6 +63,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         android.util.Log.i("TeleTVShare", "main onResume url=${manifestUrl.isNotEmpty()}")
+        Updater.checkForUpdate(this)
         if (manifestUrl.isEmpty()) return
         pollJob = lifecycleScope.launch {
             while (isActive) {
