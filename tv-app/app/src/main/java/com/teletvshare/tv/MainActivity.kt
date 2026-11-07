@@ -169,7 +169,8 @@ class MainActivity : AppCompatActivity() {
     private fun unlinked(reason: String?) {
         Prefs.setManifest(this, null)
         Prefs.setReportUrl(this, null)
-        startActivity(Intent(this, PairActivity::class.java).apply { if (reason != null) putExtra("reason", reason) })
+        Prefs.setReason(this, reason)
+        startActivity(Intent(this, PairActivity::class.java))
         finish()
     }
 

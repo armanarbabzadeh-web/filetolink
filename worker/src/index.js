@@ -23,6 +23,8 @@ const WELCOME = { plan: 'p500', days: 7 };
 const REF_BONUS = 500e6;          // referral reward
 const REF_DAYS = 7;
 const REF_MAX_PER_MONTH = 10;
+const RATE_PER_MIN = 30;           // messages + button presses per user
+const RATE_PER_DAY = 1500;
 
 const PLANS = {
   free: { title: 'رایگان', quota: 100e6, price: 0, fw: 4 },
@@ -206,6 +208,7 @@ export class Store extends DurableObject {
     this.addCols('payments', { months: 'INTEGER NOT NULL DEFAULT 1' });
     this.addCols('support', { answered_at: 'INTEGER' });
     this.addCols('users', { terms_at: 'INTEGER', ref_code: 'TEXT', referred_by: 'INTEGER', ref_rewarded: 'INTEGER NOT NULL DEFAULT 0' });
+    this.addCols('welcomed', { gifted: 'INTEGER NOT NULL DEFAULT 1' });
     this.addCols('devices', { manifest_at: 'INTEGER', rep_month: 'TEXT', rep_bytes: 'INTEGER NOT NULL DEFAULT 0' });
     this.sql.exec('UPDATE files SET owner=? WHERE owner IS NULL', Number(env.OWNER_ID));
     this.sql.exec('CREATE INDEX IF NOT EXISTS files_owner ON files(owner, created_at)');
@@ -233,7 +236,7 @@ export class Store extends DurableObject {
     if (v != null) return v;
     return ({
       card_number: this.env.CARD_NUMBER, card_name: this.env.CARD_NAME, card_bank: this.env.CARD_BANK,
-      mult_up: '10', links: '0',
+      mult_up: '10', links: '0', welcome_daily: '50',
       ...Object.fromEntries(Object.keys(PLANS).map((k) => ['fw_' + k, String(PLANS[k].fw)])),
       ...Object.fromEntries(SALE.map((k) => ['price_' + k, String(PLANS[k].price)])),
       disc_3: '10', disc_6: '15', disc_12: '25',
@@ -289,9 +292,18 @@ export class Store extends DurableObject {
       from.id, from.first_name || '', from.username || null, now, now);
     let welcomed = false;
     if (isNew && !this.isAdmin(from.id) && !this.one('SELECT 1 AS x FROM welcomed WHERE id=?', from.id)) {
-      this.sql.exec('INSERT INTO welcomed(id, at) VALUES (?,?)', from.id, now);
-      this.activatePlan(from.id, WELCOME.plan, WELCOME.days);
-      welcomed = true;
+      // cap welcome gifts per day so mass-created accounts can't run up the storage bill
+      const cap = Number(this.setting('welcome_daily')) || 50;
+      const today = this.one('SELECT COUNT(*) AS c FROM welcomed WHERE gifted=1 AND at > ?', now - DAY).c;
+      const gift = today < cap;
+      this.sql.exec('INSERT INTO welcomed(id, at, gifted) VALUES (?,?,?)', from.id, now, gift ? 1 : 0);
+      if (gift) {
+        this.activatePlan(from.id, WELCOME.plan, WELCOME.days);
+        welcomed = true;
+      } else if (this.meta('welcome_cap_day') !== String(Math.floor(now / DAY))) {
+        this.meta('welcome_cap_day', String(Math.floor(now / DAY)));
+        this._capHit = true;
+      }
     }
     const u = this.user(from.id);
     u._new = isNew;
@@ -495,7 +507,13 @@ export class Store extends DurableObject {
     if (u.callback_query) return this.onCallback(u.callback_query);
     const m = u.message;
     if (!m || m.chat?.type !== 'private' || !m.from) return;
+    const rl = this.rateLimited(m.from.id);
+    if (rl) {
+      if (!rl.warned) { rl.warned = 1; await this.send(m.chat.id, '⏳ پیام‌های شما خیلی زیاد است. لطفاً چند دقیقه صبر کنید.'); }
+      return;
+    }
     const user = this.touchUser(m.from);
+    if (this._capHit) { this._capHit = false; await this.notifyAdmin(`⚠️ سقف هدیه عضویت امروز (${faNum(Number(this.setting('welcome_daily')) || 50)} نفر) پر شد. عضوهای جدید تا فردا فقط پلن رایگان می‌گیرند. اگر عادی است، سقف را از تنظیمات بالا ببرید.`); }
     if (user._new) await this.notifyAdmin(`👤 کاربر جدید: ${esc(user.first_name)}${user.username ? ` @${esc(user.username)}` : ''} — <code>${user.id}</code>`);
     if (user.banned) return this.send(m.chat.id, '⛔️ حساب شما مسدود شده است.');
 
@@ -784,7 +802,24 @@ export class Store extends DurableObject {
     ].join('\n');
   }
 
+  // The APK can be replaced directly on Arvan (e.g. by CI); notice a new version by its ETag.
+  async refreshAppInfo() {
+    const key = this.meta('app_key') || 'app/TeleTVShare.apk';
+    const r = await this.s3().fetch(this.objUrl(key), { method: 'HEAD', headers: { 'x-amz-content-sha256': 'UNSIGNED-PAYLOAD' } }).catch(() => null);
+    if (!r?.ok) return;
+    const etag = r.headers.get('etag');
+    if (etag && etag !== this.meta('app_etag')) {
+      this.meta('app_key', key);
+      this.meta('app_etag', etag);
+      this.meta('app_size', Number(r.headers.get('content-length')) || 0);
+      this.meta('app_version', r.headers.get('x-amz-meta-version') || this.meta('app_version'));
+      this.meta('app_at', Date.now());
+      this.meta('app_file_id', null);
+    }
+  }
+
   async sendApp(chat) {
+    await this.refreshAppInfo();
     const app = this.appInfo();
     if (!app) return this.send(chat, '📲 اپ تلویزیون TeleTVShare به‌زودی منتشر می‌شود. همین‌جا خبرتان می‌کنیم.', this.menuKeyboard());
     const caption = `📲 <b>TeleTVShare برای تلویزیون اندروید</b>${app.version ? ` — نسخه ${esc(app.version)}` : ''}\n${fmtSize(app.size)} — راهنمای نصب در پیام بعدی 👇`;
@@ -1138,6 +1173,52 @@ export class Store extends DurableObject {
     return false;
   }
 
+  // ---- per-user rate limit (in memory; the admin is exempt)
+  rateLimited(uid) {
+    if (this.isAdmin(uid)) return false;
+    this.rl ||= new Map();
+    const now = Date.now(), min = Math.floor(now / 60_000), day = Math.floor(now / DAY);
+    let r = this.rl.get(uid);
+    if (!r || r.day !== day) r = { min, m: 0, day, d: 0, warned: 0 };
+    if (r.min !== min) { r.min = min; r.m = 0; }
+    r.m++; r.d++;
+    this.rl.set(uid, r);
+    if (this.rl.size > 5000) this.rl.clear();
+    return r.m > RATE_PER_MIN || r.d > RATE_PER_DAY ? r : false;
+  }
+
+  // ---- daily private backup of the database to Arvan (backup/db-YYYY-MM-DD.json, kept 14 days)
+  async dailyBackup() {
+    const day = new Date(Date.now() + 3.5 * 3600e3).toISOString().slice(0, 10);
+    if (this.meta('last_backup') === day) return;
+    const dump = {
+      at: Date.now(),
+      users: this.q('SELECT * FROM users'),
+      payments: this.q('SELECT * FROM payments'),
+      gift_codes: this.q('SELECT * FROM gift_codes'),
+      gift_uses: this.q('SELECT * FROM gift_uses'),
+      bonuses: this.q('SELECT * FROM bonuses'),
+      devices: this.q('SELECT * FROM devices'),
+      welcomed: this.q('SELECT * FROM welcomed'),
+      files: this.q('SELECT id,name,mime,size,kind,status,owner,created_at,obj_key,thumb_key,duration,width,height,source_url FROM files'),
+      meta: this.q("SELECT * FROM meta WHERE key LIKE 'set_%' OR key LIKE 'app_%'"),
+    };
+    await this.s3put(`backup/db-${day}.json`, JSON.stringify(dump), { type: 'application/json', acl: null });
+    const old = new Date(Date.now() + 3.5 * 3600e3 - 14 * DAY).toISOString().slice(0, 10);
+    await this.s3del(`backup/db-${old}.json`);
+    this.meta('last_backup', day);
+  }
+
+  // ---- the bucket must never be publicly listable (files are public one by one)
+  async bucketWatchdog() {
+    const r = await fetch(`${this.env.ARVAN_PUBLIC_URL}/?max-keys=1`, { headers: { 'user-agent': 'teletvshare-watchdog' } }).catch(() => null);
+    if (!r || r.status !== 200) return;
+    const fix = await this.s3().fetch(`${this.env.ARVAN_ENDPOINT}/${this.env.ARVAN_BUCKET}?acl`, {
+      method: 'PUT', headers: { 'x-amz-acl': 'private', 'x-amz-content-sha256': 'UNSIGNED-PAYLOAD' },
+    }).catch(() => null);
+    await this.notifyAdmin(`🚨 سطل آروان عمومی شده بود (فهرست همه فایل‌ها برای همه قابل دیدن بود). ${fix?.ok ? 'خودکار دوباره خصوصی شد ✅' : 'خصوصی کردن خودکار ناموفق بود ❌ لطفاً در پنل آروان آن را «خصوصی» کنید.'}\nفایل‌ها برای پخش لازم نیست سطل عمومی باشد.`);
+  }
+
   tvStatus(user) {
     const d = this.one('SELECT * FROM devices WHERE user_id=?', user.id);
     if (!d) {
@@ -1306,6 +1387,7 @@ export class Store extends DurableObject {
   async onCallback(cb) {
     const chatId = cb.message?.chat?.id, msgId = cb.message?.message_id;
     const answer = (text, alert = false) => this.tg('answerCallbackQuery', { callback_query_id: cb.id, text, show_alert: alert });
+    if (this.rateLimited(cb.from?.id)) return answer('⏳ کمی صبر کنید', false);
     const user = this.touchUser(cb.from);
     if (user.banned) return answer('⛔️ حساب شما مسدود است', true);
     const [op, a, b] = String(cb.data || '').split(':');
@@ -1619,6 +1701,7 @@ export class Store extends DurableObject {
       '',
       `🏷 تخفیف خرید چندماهه: ۳ ماهه ${faNum(this.discount(3))}٪ — ۶ ماهه ${faNum(this.discount(6))}٪ — یک ساله ${faNum(this.discount(12))}٪`,
       `🔗 دانلود از لینک: ${this.setting('links') === '1' ? 'فعال برای همه' : 'فقط برای مدیر'}`,
+      `🎁 سقف هدیه عضویت: ${faNum(Number(this.setting('welcome_daily')) || 50)} نفر در روز`,
       `⬆️ مصرف منصفانه آپلود: ${faNum(Number(this.setting('mult_up')))} برابر فضای پلن (برای شما هزینه‌ای ندارد)`,
       `📺 مصرف منصفانه تماشا (به کاربر نشان داده نمی‌شود): ${SALE.map((k) => `${PLANS[k].title.split(' ')[0]} گیگ ${faNum(this.fairWatch(k))}×`).join('، ')}`,
       '',
@@ -1631,6 +1714,7 @@ export class Store extends DurableObject {
     return [
       [{ text: '💳 شماره کارت', callback_data: 'se:card_number' }, { text: '👤 نام صاحب کارت', callback_data: 'se:card_name' }],
       [{ text: '🏦 بانک', callback_data: 'se:card_bank' }],
+      [{ text: '🎁 سقف هدیه عضویت در روز', callback_data: 'se:welcome_daily' }],
       [{ text: '⬆️ منصفانه آپلود', callback_data: 'se:mult_up' }, { text: this.setting('links') === '1' ? '🔗 خاموش کردن لینک برای کاربران' : '🔗 روشن کردن لینک برای کاربران', callback_data: 'lt' }],
       SALE.map((k) => ({ text: `📺 منصفانه ${PLANS[k].title.split(' ')[0]}G`, callback_data: `se:fw_${k}` })),
       SALE.slice(0, 2).map((k) => ({ text: `قیمت ${PLANS[k].title}`, callback_data: `se:price_${k}` })),
@@ -1645,6 +1729,7 @@ export class Store extends DurableObject {
       card_name: 'نام صاحب کارت را بفرستید:',
       card_bank: 'نام بانک را بفرستید:',
       mult_up: 'ضریب مصرف منصفانه آپلود ماهانه را بفرستید (مثلاً ۱۰ یعنی ۱۰ برابر فضای پلن):',
+      welcome_daily: 'حداکثر تعداد هدیه عضویت (۵۰۰ مگ) در هر ۲۴ ساعت را بفرستید (مثلاً ۵۰):',
       ...Object.fromEntries(SALE.map((k) => ['fw_' + k, `ضریب مصرف منصفانه تماشای ماهانه پلن ${PLANS[k].title} را بفرستید (مثلاً ۲ یعنی ۲ برابر فضای پلن). کمتر = قیمت‌گذاری امن‌تر:`])),
       disc_3: 'درصد تخفیف خرید ۳ ماهه را بفرستید (۰ تا ۹۰):',
       disc_6: 'درصد تخفیف خرید ۶ ماهه را بفرستید (۰ تا ۹۰):',
@@ -1661,7 +1746,7 @@ export class Store extends DurableObject {
     } else if (key.startsWith('disc_')) {
       v = v.replace(/[٪%\s]/g, '');
       if (!/^\d+$/.test(v) || Number(v) > 90) return A('❌ یک عدد بین ۰ تا ۹۰ بفرستید.', this.settingsKeyboard());
-    } else if (key.startsWith('mult') || key.startsWith('price_') || key.startsWith('fw_')) {
+    } else if (key.startsWith('mult') || key.startsWith('price_') || key.startsWith('fw_') || key === 'welcome_daily') {
       v = v.replace(/[,\s٬]/g, '');
       if (!/^\d+$/.test(v) || Number(v) <= 0) return A('❌ یک عدد مثبت بفرستید.', this.settingsKeyboard());
     } else if (!v || v.length > 60) {
@@ -1917,6 +2002,8 @@ export class Store extends DurableObject {
   async maintenance() {
     const now = Date.now();
     const low = () => this.budget() < 8;
+    try { await this.bucketWatchdog(); } catch (e) { console.log('watchdog failed', String(e)); }
+    try { await this.dailyBackup(); } catch (e) { console.log('backup failed', String(e)); }
     this.sql.exec('DELETE FROM seen2 WHERE at < ?', now - 3 * DAY);
     this.sql.exec(`DELETE FROM files WHERE status IN ('link_choose','link_probe') AND created_at < ?`, now - 6 * 3600e3);
     this.sql.exec('DELETE FROM seen');
@@ -2056,71 +2143,31 @@ export class Store extends DurableObject {
   }
 
   // ================================================================ admin JSON API (tests and future cPanel)
+  // Read-only admin API (for a future web panel). Anything that changes money, plans, users or the
+  // published app is done only in the admin bot, so a leaked API key cannot redirect payments or ship an APK.
   async api(req, url, p) {
     const h = req.headers.get('authorization') || '';
     const token = h.startsWith('Bearer ') ? h.slice(7) : '';
     if (!this.env.API_KEY || !timingSafeEqual(token, this.env.API_KEY)) return Response.json({ error: 'unauthorized' }, { status: 401 });
-    let m;
-    if (p === '/api/admin/users' && req.method === 'GET') {
+    if (req.method !== 'GET') return Response.json({ error: 'read-only' }, { status: 405 });
+    if (p === '/api/admin/users') {
       return Response.json(this.q('SELECT * FROM users ORDER BY created_at').map((u) => ({
-        ...u, used: this.userUsed(u.id), tv: this.one('SELECT token FROM devices WHERE user_id=?', u.id)?.token || null,
+        ...u, used: this.userUsed(u.id), tv: !!this.one('SELECT 1 AS x FROM devices WHERE user_id=?', u.id),
       })));
-    }
-    if ((m = /^\/api\/admin\/users\/(\d+)$/.exec(p)) && req.method === 'DELETE' && !this.isAdmin(m[1])) {
-      const target = Number(m[1]);
-      for (const f of this.q('SELECT id FROM files WHERE owner=?', target)) await this.deleteFile(f.id);
-      const d = this.one('SELECT * FROM devices WHERE user_id=?', target);
-      if (d) await this.removeDevice(d);
-      this.sql.exec('DELETE FROM payments WHERE user_id=?', target);
-      this.sql.exec('DELETE FROM gift_uses WHERE user_id=?', target);
-      this.sql.exec('DELETE FROM users WHERE id=?', target);
-      if (url.searchParams.has('forget')) this.sql.exec('DELETE FROM welcomed WHERE id=?', target);
-      return Response.json({ ok: true });
-    }
-    if ((m = /^\/api\/admin\/users\/(\d+)$/.exec(p)) && req.method === 'PATCH') {
-      const b = await req.json();
-      for (const k of ['plan', 'expires_at', 'grace_until', 'reminded', 'up_used', 'up_month', 'watch_used', 'watch_month', 'watch_warned']) {
-        if (k in b) this.sql.exec(`UPDATE users SET ${k}=? WHERE id=?`, b[k], Number(m[1]));
-      }
-      return Response.json(this.user(Number(m[1])));
     }
     if (p === '/api/admin/files') {
       const owner = url.searchParams.get('owner');
+      const cols = 'id,name,size,status,kind,owner,created_at';
       return Response.json(owner
-        ? this.q('SELECT id,name,size,status,storage,obj_key,thumb_key,owner,created_at FROM files WHERE owner=? ORDER BY created_at', Number(owner))
-        : this.q('SELECT id,name,size,status,storage,obj_key,thumb_key,owner,created_at FROM files ORDER BY created_at'));
+        ? this.q(`SELECT ${cols} FROM files WHERE owner=? ORDER BY created_at`, Number(owner))
+        : this.q(`SELECT ${cols} FROM files ORDER BY created_at`));
     }
-    if (p === '/api/admin/head') {
-      const key = url.searchParams.get('key');
-      const r = await this.s3().fetch(this.objUrl(key), { method: 'HEAD', headers: { 'x-amz-content-sha256': 'UNSIGNED-PAYLOAD' } });
-      return Response.json({ status: r.status, len: r.headers.get('content-length'), url: this.objUrl(key), size: await this.s3head(key, 1) });
-    }
-    if (p === '/api/admin/maintenance' && req.method === 'POST') return Response.json({ more: await this.maintenance(), subrequests: this.sub });
-    if (p === '/api/admin/migrate' && req.method === 'POST') {
-      try { return Response.json(await this.migrateOne()); } catch (e) { return Response.json({ error: String(e.stack || e) }, { status: 500 }); }
-    }
-    if (p === '/api/admin/payments') return Response.json(this.q('SELECT * FROM payments ORDER BY id'));
-    if (p === '/api/admin/app' && req.method === 'POST') {
-      const buf = await req.arrayBuffer();
-      if (buf.byteLength < 100_000) return Response.json({ error: 'too small' }, { status: 400 });
-      const key = 'app/TeleTVShare.apk';
-      await this.s3put(key, buf, { type: 'application/vnd.android.package-archive', cache: 'no-cache, max-age=0', disposition: 'attachment; filename="TeleTVShare.apk"' });
-      this.meta('app_key', key);
-      this.meta('app_size', buf.byteLength);
-      this.meta('app_version', (url.searchParams.get('version') || '').slice(0, 20) || null);
-      this.meta('app_at', Date.now());
-      this.meta('app_file_id', null);
-      return Response.json({ ok: true, url: this.publicUrl(key), size: buf.byteLength });
-    }
+    if (p === '/api/admin/payments') return Response.json(this.q('SELECT id,user_id,plan,months,amount,status,created_at,decided_at FROM payments ORDER BY id'));
     if (p === '/api/admin/bonuses') return Response.json(this.q('SELECT * FROM bonuses ORDER BY id'));
     if (p === '/api/admin/support') return Response.json(this.q('SELECT * FROM support ORDER BY created_at'));
     if (p === '/api/admin/gifts') return Response.json(this.q('SELECT * FROM gift_codes ORDER BY created_at'));
-    if (p === '/api/admin/settings' && req.method === 'PATCH') {
-      const b = await req.json();
-      for (const [k, v] of Object.entries(b)) this.meta('set_' + k, v == null ? null : String(v));
-    }
     if (p === '/api/admin/settings') return Response.json(Object.fromEntries(
-      ['card_number', 'card_name', 'card_bank', 'mult_up', 'links', ...SALE.map((k) => 'fw_' + k), 'disc_3', 'disc_6', 'disc_12', ...SALE.map((k) => 'price_' + k)].map((k) => [k, this.setting(k)])));
+      ['card_number', 'card_name', 'card_bank', 'mult_up', 'links', 'welcome_daily', ...SALE.map((k) => 'fw_' + k), 'disc_3', 'disc_6', 'disc_12', ...SALE.map((k) => 'price_' + k)].map((k) => [k, this.setting(k)])));
     return Response.json({ error: 'not found' }, { status: 404 });
   }
 

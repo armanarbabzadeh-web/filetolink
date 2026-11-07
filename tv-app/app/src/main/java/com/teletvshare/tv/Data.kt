@@ -40,6 +40,9 @@ object Prefs {
     fun setManifest(ctx: Context, url: String?) = p(ctx).edit().putString("manifest", url).apply()
     fun reportUrl(ctx: Context): String? = p(ctx).getString("report", null)
     fun setReportUrl(ctx: Context, url: String?) = p(ctx).edit().putString("report", url).apply()
+    // Message shown on the pairing screen; only the app itself can set it (no intent extras from outside).
+    fun setReason(ctx: Context, s: String?) = p(ctx).edit().putString("reason", s).apply()
+    fun takeReason(ctx: Context): String? = p(ctx).getString("reason", null)?.also { setReason(ctx, null) }
 }
 
 object Net {

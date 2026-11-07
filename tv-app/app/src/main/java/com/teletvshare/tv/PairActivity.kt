@@ -32,12 +32,6 @@ class PairActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // A manifest URL can be handed over directly (used for automated screenshots).
-        intent.getStringExtra("manifest")?.takeIf { it.startsWith("http") }?.let {
-            Prefs.setManifest(this, it)
-            openMain()
-            return
-        }
         if (Prefs.manifest(this) != null) {
             openMain()
             return
@@ -47,7 +41,7 @@ class PairActivity : AppCompatActivity() {
         setContentView(R.layout.activity_pair)
         findViewById<TextView>(R.id.brand).text = brand(this)
         findViewById<TextView>(R.id.step2).text = getString(R.string.pair_step2, BuildConfig.BOT_USERNAME)
-        intent.getStringExtra("reason")?.let { findViewById<TextView>(R.id.status).text = it }
+        Prefs.takeReason(this)?.let { findViewById<TextView>(R.id.status).text = it }
     }
 
     override fun onResume() {
@@ -59,7 +53,7 @@ class PairActivity : AppCompatActivity() {
             while (isActive) {
                 // Keep the same code while the user switches to Telegram and back; renew it only when it expires.
                 if (code == null || System.currentTimeMillis() > codeUntil) {
-                    code = intent.getStringExtra("code")?.takeIf { Api.isCode(it) && code == null } ?: Api.newCode()
+                    code = Api.newCode()
                     codeUntil = System.currentTimeMillis() + 14 * 60_000L
                 }
                 val code = code!!
@@ -99,7 +93,7 @@ class PairActivity : AppCompatActivity() {
     }
 
     private fun openMain() {
-        startActivity(Intent(this, MainActivity::class.java).putExtras(intent))
+        startActivity(Intent(this, MainActivity::class.java))
         finish()
     }
 
