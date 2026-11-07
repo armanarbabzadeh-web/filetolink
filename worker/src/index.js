@@ -200,6 +200,7 @@ export class Store extends DurableObject {
     });
     this.addCols('payments', { months: 'INTEGER NOT NULL DEFAULT 1' });
     this.addCols('support', { answered_at: 'INTEGER' });
+    this.addCols('users', { terms_at: 'INTEGER' });
     this.addCols('devices', { manifest_at: 'INTEGER', rep_month: 'TEXT', rep_bytes: 'INTEGER NOT NULL DEFAULT 0' });
     this.sql.exec('UPDATE files SET owner=? WHERE owner IS NULL', Number(env.OWNER_ID));
     this.sql.exec('CREATE INDEX IF NOT EXISTS files_owner ON files(owner, created_at)');
@@ -485,9 +486,14 @@ export class Store extends DurableObject {
 
     const media = extractMedia(m);
     const link = !media && (text.match(/https?:\/\/\S+/) || [])[0];
-    if (link) { if (user.state) this.setState(user.id, null); return this.addLink(m, user, link); }
+    if (link) {
+      if (user.state) this.setState(user.id, null);
+      if (await this.needsTerms(m, user)) return;
+      return this.addLink(m, user, link);
+    }
     if (!media) return this.sendMenu(m.chat.id, user);
     if (user.state) this.setState(user.id, null);
+    if (await this.needsTerms(m, user)) return;
     return this.addFile(m, user, media);
   }
 
@@ -511,6 +517,7 @@ export class Store extends DurableObject {
     if (name === 'tv') return arg ? this.linkTv(chat, user, arg) : this.sendTvStatus(chat, user);
     if (name === 'app' || name === 'install') return this.sendApp(chat);
     if (name === 'support') return this.supportStart(chat, user);
+    if (name === 'rules' || name === 'terms') return this.sendTerms(chat, user, true);
     if (name === 'help' || name === 'guide') return this.sendTutorial(chat);
     return this.sendMenu(chat, user);
   }
@@ -521,7 +528,7 @@ export class Store extends DurableObject {
       [{ text: '📂 فایل‌های من', callback_data: 'l:0' }, { text: '👤 حساب من', callback_data: 'a' }],
       [{ text: '🎁 کد هدیه', callback_data: 'g' }, { text: '📺 تلویزیون', callback_data: 't' }],
       [{ text: '📲 دریافت اپ تلویزیون', callback_data: 'app' }, { text: '📖 آموزش', callback_data: 'help' }],
-      [{ text: '💬 پشتیبانی', callback_data: 'sup' }],
+      [{ text: '💬 پشتیبانی', callback_data: 'sup' }, { text: '📜 قوانین', callback_data: 'tr' }],
     ];
   }
 
@@ -531,6 +538,7 @@ export class Store extends DurableObject {
       head = `👋 سلام ${esc(user.first_name || '')}! به <b>TeleTVShare</b> خوش آمدید.\nهر فایلی (ویدیو، عکس، صوت، سند) اینجا بفرستید، روی تلویزیون شما نمایش داده می‌شود.\n\n`;
       if (user._welcomed) head += `🎁 هدیه عضویت: <b>${PLANS[WELCOME.plan].title} رایگان برای ${faNum(WELCOME.days)} روز</b>!\n\n`;
       head += '📺 اپ TeleTVShare را از دکمه «📲 دریافت اپ تلویزیون» بگیرید، روی تلویزیون نصب کنید و QR روی صفحه را با گوشی اسکن کنید.\n\n';
+      if (!user.terms_at && !this.isAdmin(user.id)) head += '📜 قبل از شروع، «قوانین» را بخوانید و بپذیرید.\n\n';
     }
     return this.send(chat, head + this.accountText(user), this.menuKeyboard());
   }
@@ -725,21 +733,20 @@ export class Store extends DurableObject {
     return [
       '📺 <b>نصب اپ TeleTVShare روی تلویزیون اندروید</b>',
       '',
-      '<b>روش ۱ — مستقیم روی تلویزیون (پیشنهادی)</b>',
-      '۱. روی تلویزیون از Google Play برنامه <b>Downloader</b> (سازنده: AFTVnews) را نصب کنید.',
-      '۲. در تنظیمات تلویزیون: Settings ← Device Preferences ← Security & restrictions ← <b>Unknown sources</b> و Downloader را روشن کنید.',
-      '۳. Downloader را باز کنید و این آدرس را در کادر آن بنویسید:',
-      `<code>${esc(app.url)}</code>`,
-      '۴. بعد از دانلود، <b>Install</b> را بزنید.',
+      '<b>روش ۱ — با گوشی (ساده‌ترین)</b>',
+      '۱. فایل APK پیام بالا را در تلگرام گوشی دانلود کنید.',
+      '۲. برنامه <b>Send Files to TV</b> را روی گوشی و تلویزیون نصب کنید (از Google Play).',
+      '۳. فایل را از گوشی به تلویزیون بفرستید.',
+      '۴. روی تلویزیون فایل را باز کنید و <b>Install</b> را بزنید.',
       '',
-      '<b>روش ۲ — از گوشی</b>',
-      '۱. فایل APK همین پیام را در تلگرام دانلود کنید.',
-      '۲. برنامه <b>Send Files to TV</b> را روی گوشی و تلویزیون نصب کنید و فایل را به تلویزیون بفرستید (یا روی فلش بریزید و با فایل‌منیجر تلویزیون باز کنید).',
-      '۳. روی تلویزیون فایل را باز کنید و Install را بزنید (اگر خواست، اجازه نصب از منابع ناشناس را بدهید).',
+      '<b>روش ۲ — با فلش</b>',
+      'فایل APK را روی فلش بریزید، فلش را به تلویزیون بزنید و با یک فایل‌منیجر (مثل File Commander) فایل را باز و نصب کنید.',
       '',
-      '<b>بعد از نصب:</b> اپ را باز کنید؛ یک کد و QR نشان می‌دهد. QR را با دوربین گوشی اسکن کنید یا کد را در همین بات از «📺 تلویزیون» بفرستید.',
+      '<b>اگر خطای نصب داد:</b> در تنظیمات تلویزیون Settings ← Device Preferences ← Security &amp; restrictions ← <b>Unknown sources</b> را برای برنامه‌ای که فایل را با آن باز می‌کنید روشن کنید.',
       '',
-      'دانلود و تماشا روی تلویزیون در ایران بدون VPN کار می‌کند.',
+      '<b>بعد از نصب:</b> اپ را باز کنید؛ یک QR و کد نشان می‌دهد. QR را با دوربین گوشی اسکن کنید یا کد را در همین بات از «📺 تلویزیون» بفرستید.',
+      '',
+      'تماشا روی تلویزیون در ایران بدون VPN کار می‌کند.',
     ].join('\n');
   }
 
@@ -753,7 +760,21 @@ export class Store extends DurableObject {
       this.meta('app_file_id', null);
       r = await this.tg('sendDocument', { chat_id: chat, document: app.url, caption, parse_mode: 'HTML' });
     }
+    if (!r.ok) {
+      // Telegram could not fetch it by URL: upload the file itself.
+      const res = await this.s3get(app.key);
+      if (res) {
+        const form = new FormData();
+        form.set('chat_id', String(chat));
+        form.set('caption', caption);
+        form.set('parse_mode', 'HTML');
+        form.set('document', await res.blob(), 'TeleTVShare.apk');
+        this.sub = (this.sub || 0) + 1;
+        r = await fetch(`https://api.telegram.org/bot${this.env.BOT_TOKEN}/sendDocument`, { method: 'POST', body: form }).then((x) => x.json()).catch(() => ({ ok: false }));
+      }
+    }
     if (r.ok && r.result?.document?.file_id) this.meta('app_file_id', r.result.document.file_id);
+    if (!r.ok) return this.send(chat, '⚠️ ارسال فایل اپ الان ممکن نشد. چند دقیقه بعد دوباره «📲 دریافت اپ تلویزیون» را بزنید.');
     return this.send(chat, this.installGuide(app), [[{ text: '📺 اتصال تلویزیون', callback_data: 't' }]]);
   }
 
@@ -950,7 +971,7 @@ export class Store extends DurableObject {
       '<b>۶. اشتراک</b>',
       'از «📦 خرید یا تمدید اشتراک» پلن و مدت را انتخاب کنید، مبلغ را کارت‌به‌کارت کنید و عکس رسید را بفرستید. اگر کد هدیه دارید، از «🎁 کد هدیه» وارد کنید.',
       '',
-      'سؤالی بود؟ «💬 پشتیبانی» را بزنید.',
+      'قوانین استفاده را از «📜 قوانین» ببینید. سؤالی بود؟ «💬 پشتیبانی» را بزنید.',
     ].join('\n');
   }
 
@@ -959,6 +980,36 @@ export class Store extends DurableObject {
       [{ text: '📲 دریافت اپ تلویزیون', callback_data: 'app' }, { text: '📺 اتصال تلویزیون', callback_data: 't' }],
       [{ text: '💬 پشتیبانی', callback_data: 'sup' }],
     ]);
+  }
+
+  // ---- terms of use (must be accepted before the first upload)
+  termsText() {
+    return [
+      '📜 <b>قوانین استفاده از TeleTVShare</b>',
+      '',
+      '۱. این سرویس برای نگهداری و تماشای <b>فایل‌های شخصی</b> شما روی تلویزیون خودتان است.',
+      '۲. ارسال یا دانلود محتوایی که <b>حق نشر</b> آن متعلق به دیگران است (فیلم، سریال، موسیقی، کتاب و…) بدون اجازه صاحب اثر ممنوع است.',
+      '۳. ارسال محتوای مستهجن، غیراخلاقی، خشونت‌آمیز، توهین‌آمیز یا هر محتوای خلاف قوانین جمهوری اسلامی ایران ممنوع است.',
+      '۴. مسئولیت همه فایل‌ها و لینک‌هایی که ارسال می‌کنید با خود شماست.',
+      '۵. در صورت تخلف، فایل‌ها بدون اطلاع قبلی حذف و حساب مسدود می‌شود و مبلغ اشتراک بازگردانده نمی‌شود.',
+      '۶. هر حساب فقط روی یک تلویزیون فعال است و واگذاری یا فروش حساب به دیگران مجاز نیست.',
+      '۷. پس از پایان اشتراک، فایل‌های بیشتر از فضای رایگان ۲۴ ساعت بعد پاک می‌شوند.',
+      '۸. حداکثر حجم هر فایل ارسالی در تلگرام ۲۰ مگابایت است و مصرف منصفانه برای همه پلن‌ها برقرار است.',
+      '۹. TeleTVShare می‌تواند این قوانین را به‌روز کند؛ ادامه استفاده یعنی پذیرش قوانین جدید.',
+    ].join('\n');
+  }
+
+  sendTerms(chat, user, askAccept) {
+    const kb = askAccept && !user.terms_at ? [[{ text: '✅ قوانین را می‌پذیرم', callback_data: 'ta' }]] : null;
+    return this.send(chat, this.termsText() + (kb ? '\n\nبرای استفاده از سرویس، قوانین را بپذیرید.' : ''), kb);
+  }
+
+  // Returns true if the user still has to accept the terms (and asks them to).
+  async needsTerms(m, user) {
+    if (user.terms_at || this.isAdmin(user.id)) return false;
+    await this.send(m.chat.id, this.termsText() + '\n\n⚠️ قبل از ارسال اولین فایل، لطفاً قوانین را بپذیرید و دوباره فایل یا لینک را بفرستید.',
+      [[{ text: '✅ قوانین را می‌پذیرم', callback_data: 'ta' }]], m.message_id);
+    return true;
   }
 
   tvStatus(user) {
@@ -1152,6 +1203,12 @@ export class Store extends DurableObject {
       case 't': { const v = this.tvStatus(user); await this.send(chatId, v.text, v.kb); return answer(); }
       case 'app': await this.sendApp(chatId); return answer();
       case 'help': await this.sendTutorial(chatId); return answer();
+      case 'tr': await this.sendTerms(chatId, user, true); return answer();
+      case 'ta': {
+        if (!user.terms_at) this.sql.exec('UPDATE users SET terms_at=? WHERE id=?', Date.now(), user.id);
+        await this.edit(chatId, msgId, '✅ قوانین پذیرفته شد. حالا می‌توانید فایل یا لینک ویدیو بفرستید.', this.menuKeyboard());
+        return answer('پذیرفته شد');
+      }
       case 'lq': return this.chooseQuality(cb, user, a, b);
       case 'sup': await this.supportStart(chatId, user); return answer();
       case 'se_end': this.setState(user.id, null); await this.send(chatId, 'گفتگو با پشتیبانی بسته شد. هر وقت سؤالی داشتید، دوباره «💬 پشتیبانی» را بزنید.', this.menuKeyboard()); return answer();
@@ -1628,6 +1685,7 @@ export class Store extends DurableObject {
       `تلویزیون: ${tv ? `وصل از ${fmtDate(tv.created_at, false)}` : '—'}`,
       `مجموع پرداخت: ${faNum(paid)} تومان`,
       `عضویت: ${fmtDate(u.created_at, false)} — آخرین فعالیت: ${fmtDate(u.last_seen || u.created_at)}`,
+      `قوانین: ${u.terms_at ? `پذیرفته در ${fmtDate(u.terms_at, false)}` : 'هنوز نپذیرفته'}`,
     ].join('\n');
     const kb = [
       [{ text: '➕ تمدید ۳۰ روز', callback_data: `u:${uid}:ext` }],
