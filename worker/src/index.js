@@ -881,10 +881,12 @@ export class Store extends DurableObject {
     let url;
     try { url = new URL(raw); } catch { return this.send(m.chat.id, '❌ این لینک معتبر نیست.', null, m.message_id); }
     if (!/^https?:$/.test(url.protocol)) return this.send(m.chat.id, '❌ این لینک معتبر نیست.', null, m.message_id);
-    if (/(^|\.)(youtube\.com|youtu\.be|youtube-nocookie\.com)$/i.test(url.hostname)) {
+    // The owner has no site restrictions (his own choice); other users can't send links at all.
+    const owner = this.isAdmin(user.id);
+    if (!owner && /(^|\.)(youtube\.com|youtu\.be|youtube-nocookie\.com)$/i.test(url.hostname)) {
       return this.send(m.chat.id, '⚠️ دانلود از یوتیوب فعلاً پشتیبانی نمی‌شود. می‌توانید خود فایل ویدیو را در تلگرام بفرستید.', null, m.message_id);
     }
-    if (this.blockedSite(url.hostname)) {
+    if (!owner && this.blockedSite(url.hostname)) {
       return this.send(m.chat.id, '⛔️ دانلود از این سایت پشتیبانی نمی‌شود.', null, m.message_id);
     }
     const lim = this.limits(user);
