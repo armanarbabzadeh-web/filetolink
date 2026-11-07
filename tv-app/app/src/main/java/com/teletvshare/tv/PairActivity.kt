@@ -61,7 +61,7 @@ class PairActivity : AppCompatActivity() {
                 codeView.text = code.substring(0, 4) + " " + code.substring(4)
                 qr.setImageBitmap(qrBitmap(Api.pairLink(code), 600))
                 // check right away, then every 3 seconds
-                val first = runCatching { Api.pollPair(code) }.getOrNull()
+                val first = poll(code)
                 if (first != null) {
                     Prefs.setManifest(this@PairActivity, first)
                     openMain()
@@ -69,8 +69,7 @@ class PairActivity : AppCompatActivity() {
                 }
                 while (isActive && System.currentTimeMillis() < until) {
                     delay(3_000)
-                    val manifest = runCatching { Api.pollPair(code) }
-                        .onFailure { android.util.Log.w("TeleTVShare", "pair poll failed", it) }.getOrNull()
+                    val manifest = poll(code)
                     if (manifest != null) {
                         Prefs.setManifest(this@PairActivity, manifest)
                         openMain()
@@ -90,6 +89,27 @@ class PairActivity : AppCompatActivity() {
         super.onSaveInstanceState(outState)
         outState.putString("code", code)
         outState.putLong("until", codeUntil)
+    }
+
+    private var failures = 0
+
+    /** One check for the pairing answer. Shows a clear hint on screen when the server can't be reached. */
+    private suspend fun poll(code: String): String? {
+        val status = findViewById<TextView>(R.id.status)
+        return runCatching { Api.pollPair(code) }
+            .onSuccess {
+                if (failures > 0) status.setText(R.string.pair_wait)
+                failures = 0
+            }
+            .onFailure {
+                android.util.Log.w("TeleTVShare", "pair poll failed", it)
+                failures++
+                if (failures >= 2) {
+                    val tls = generateSequence(it as Throwable?) { e -> e.cause }.any { e -> e is javax.net.ssl.SSLException || e is java.security.cert.CertificateException }
+                    status.text = if (tls) getString(R.string.pair_err_tls) else getString(R.string.pair_err_net)
+                }
+            }
+            .getOrNull()
     }
 
     private fun openMain() {

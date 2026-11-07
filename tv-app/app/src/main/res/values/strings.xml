@@ -23,6 +23,8 @@
     <string name="pair_step2">یا در بات @%1$s روی «📺 تلویزیون» بزنید و این کد را بفرستید:</string>
     <string name="pair_note">هر حساب تلگرام فقط روی یک تلویزیون فعال است.</string>
     <string name="pair_wait">منتظر تأیید از تلگرام…</string>
+    <string name="pair_err_tls">⚠️ اتصال امن به سرور برقرار نشد. تاریخ و ساعت تلویزیون را از تنظیمات درست کنید (حالت خودکار).</string>
+    <string name="pair_err_net">⚠️ تلویزیون به سرور وصل نمی‌شود. اینترنت تلویزیون را بررسی کنید؛ اگر VPN روشن است، خاموشش کنید.</string>
     <string name="scan">با دوربین گوشی اسکن کنید</string>
     <string name="file_info">این نوع فایل روی تلویزیون پخش نمی‌شود.</string>
     <string name="files_count">%1$s فایل</string>
