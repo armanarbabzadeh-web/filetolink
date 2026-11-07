@@ -81,6 +81,23 @@ async def probe_link(job):
         await fail(jid, e)
 
 
+async def upload_to_worker(jid, path, chunk):
+    """Owner's Cloudflare storage: send the file to the Worker in parts under the 100 MB request limit."""
+    part = chunk * 45  # ~85 MB, chunk-aligned
+    total = os.path.getsize(path)
+    offset = 0
+    with open(path, "rb") as fh:
+        while offset < total:
+            fh.seek(offset)
+            data = fh.read(part)
+            await call("PUT", f"/helper/upload/{jid}?offset={offset}", data=data)
+            offset += len(data)
+            try:
+                await call("POST", f"/helper/progress/{jid}", json={"done": offset, "total": total, "speed": 0}, tries=1)
+            except Exception:
+                pass
+
+
 async def download_link(job):
     jid, key = job["id"], job["obj_key"]
     log.info("link %s (%s)", jid, (job.get("fmt") or {}).get("label"))
@@ -94,12 +111,18 @@ async def download_link(job):
     try:
         path, info = await loop.run_in_executor(None, links.download, job["url"], job["fmt"], progress)
         size = os.path.getsize(path)
-        await loop.run_in_executor(None, lambda: s3.upload_file(path, BUCKET, key, ExtraArgs={
-            "ACL": "public-read", "ContentType": links.content_type(path), "ContentDisposition": job.get("disposition") or "inline"}))
+        cf = job.get("storage") == "cf"
+        if cf:
+            await upload_to_worker(jid, path, int(job.get("chunk") or 1_900_000))
+        else:
+            await loop.run_in_executor(None, lambda: s3.upload_file(path, BUCKET, key, ExtraArgs={
+                "ACL": "public-read", "ContentType": links.content_type(path), "ContentDisposition": job.get("disposition") or "inline"}))
         extra = {"duration": info.get("duration"), "width": info.get("width"), "height": info.get("height")}
         try:
             thumb = await loop.run_in_executor(None, links.fetch_thumbnail, info.get("thumbnail"))
-            if thumb:
+            if thumb and cf:
+                await call("PUT", f"/helper/thumb/{jid}", data=thumb, tries=2)
+            elif thumb:
                 tkey = f"t/{jid}.jpg"
                 await loop.run_in_executor(None, lambda: s3.put_object(Bucket=BUCKET, Key=tkey, Body=thumb, ACL="public-read",
                                                                        ContentType="image/jpeg", CacheControl="public, max-age=604800"))

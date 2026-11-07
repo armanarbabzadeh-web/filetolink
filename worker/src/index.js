@@ -10,7 +10,8 @@
 import { DurableObject } from 'cloudflare:workers';
 import { AwsClient } from 'aws4fetch';
 
-const CHUNK = 1_900_000;              // legacy in-DO storage (migration only)
+const CHUNK = 1_900_000;              // in-DO storage chunk (owner's Cloudflare storage)
+const CF_CAP = 4_600_000_000;         // free plan: 5 GB of Durable Object storage per account
 const TG_BOT_MAX = 20 * 1024 * 1024;  // Bot API getFile limit; bigger files go to the helper
 const PAGE = 8;
 const DAY = 864e5;
@@ -267,7 +268,7 @@ export class Store extends DurableObject {
   isAdmin(id) { return String(id) === String(this.env.OWNER_ID); }
   linksFor(uid) { return this.isAdmin(uid) || this.setting('links') === '1'; }
   totalUsed() { return this.one(`SELECT COALESCE(SUM(size),0) AS s FROM files WHERE status IN ${ACTIVE}`).s; }
-  userUsed(uid) { return this.one(`SELECT COALESCE(SUM(size),0) AS s FROM files WHERE owner=? AND status IN ${ACTIVE}`, uid).s; }
+  userUsed(uid) { return this.one(`SELECT COALESCE(SUM(size),0) AS s FROM files WHERE owner=? AND status IN ${ACTIVE} AND storage<>'cf'`, uid).s; }
   user(uid) { return this.one('SELECT * FROM users WHERE id=?', uid); }
 
   // Effective limits. Monthly upload and viewing caps are `mult` x storage quota.
@@ -480,13 +481,16 @@ export class Store extends DurableObject {
       if (p === '/tg') { await this.onUpdate(await req.json()); return new Response('ok'); }
       if (p === '/tga') { await this.onAdminUpdate(await req.json()); return new Response('ok'); }
       let m;
-      if ((m = /^\/f\/([A-Za-z0-9]{16})(?:\/.*)?$/.exec(p))) return this.serveLegacy(req, m[1]);
+      if ((m = /^\/f\/([A-Za-z0-9]{16})(?:\/.*)?$/.exec(p))) return this.serveFile(req, m[1]);
+      if ((m = /^\/t\/([A-Za-z0-9]{16})$/.exec(p))) return this.serveThumb(m[1]);
       if (p.startsWith('/api/')) return this.api(req, url, p);
       if (p.startsWith('/helper/')) {
         if (p === '/helper/jobs') return this.helperJobs();
         if ((m = /^\/helper\/(finish|fail)\/([A-Za-z0-9]{16})$/.exec(p))) return this.helperDone(req, m[1], m[2]);
         if ((m = /^\/helper\/progress\/([A-Za-z0-9]{16})$/.exec(p))) return this.helperProgress(req, m[1]);
         if ((m = /^\/helper\/formats\/([A-Za-z0-9]{16})$/.exec(p))) return this.helperFormats(req, m[1]);
+        if ((m = /^\/helper\/upload\/([A-Za-z0-9]{16})$/.exec(p)) && req.method === 'PUT') return this.helperUpload(req, url, m[1]);
+        if ((m = /^\/helper\/thumb\/([A-Za-z0-9]{16})$/.exec(p)) && req.method === 'PUT') return this.helperThumb(req, m[1]);
       }
       return new Response('Not found', { status: 404 });
     } catch (e) {
@@ -958,20 +962,16 @@ export class Store extends DurableObject {
       return this.send(m.chat.id, '⛔️ دانلود از این سایت پشتیبانی نمی‌شود.', null, m.message_id);
     }
     const lim = this.limits(user);
-    if (this.freeFor(user) < 1e6 || this.monthUsage(user).up >= lim.upCap) {
+    if (!owner && (this.freeFor(user) < 1e6 || this.monthUsage(user).up >= lim.upCap)) {
       return this.send(m.chat.id, '⚠️ فضای کافی ندارید. فایل‌های قدیمی را از «📂 فایل‌های من» پاک کنید یا اشتراک بگیرید.',
         [[{ text: '📦 خرید فضای بیشتر', callback_data: 'b' }]], m.message_id);
     }
     const id = randomId();
     if (owner) {
       this.sql.exec(`INSERT INTO files(id,name,mime,size,kind,status,chat_id,created_at,owner,storage,source_url)
-        VALUES (?,?,?,?,?,?,?,?,?,'arvan',?)`, id, url.hostname, 'video/mp4', 0, 'video', 'link_pending', m.chat.id, Date.now(), user.id, url.href);
-      const s = await this.send(m.chat.id, `🔗 <code>${esc(short(url.href, 60))}</code>
-با این لینک چه کنم؟`, [
-        [{ text: '📺 فقط نمایش روی تلویزیون (بدون ذخیره)', callback_data: `ls:${id}` }],
-        [{ text: '⬇️ دانلود و ذخیره در آروان', callback_data: `lp:${id}` }],
-        [{ text: '❌ لغو', callback_data: `c:${id}` }],
-      ], m.message_id);
+        VALUES (?,?,?,?,?,?,?,?,?,'arvan',?)`, id, url.hostname, 'video/mp4', 0, 'video', 'store_pending', m.chat.id, Date.now(), user.id, url.href);
+      const s = await this.send(m.chat.id, `🔗 <code>${esc(short(url.href, 60))}</code>\nکجا ذخیره شود؟\n<i>☁️ Cloudflare آزاد: ${fmtSize(this.cfFree())} — 🇮🇷 آروان آزاد: ${fmtSize(this.freeFor(user))}</i>`,
+        this.storeKb(id), m.message_id);
       if (s.ok) this.sql.exec('UPDATE files SET msg_id=? WHERE id=?', s.result.message_id, id);
       return;
     }
@@ -1003,7 +1003,7 @@ export class Store extends DurableObject {
 
   async showQualities(f) {
     const user = this.user(f.owner);
-    const free = this.freeFor(user);
+    const free = f.storage === 'cf' ? this.cfFree() : this.freeFor(user);
     const { formats } = JSON.parse(f.formats || '{"formats":[]}');
     const kb = formats.map((q, i) => {
       const fits = !q.size || q.size <= free;
@@ -1021,12 +1021,16 @@ export class Store extends DurableObject {
     const q = JSON.parse(f.formats).formats[Number(idx)];
     if (!q) return answer();
     const size = q.size || 0;
-    if (size > this.freeFor(user)) return answer(`فضای کافی ندارید (${fmtSize(size)} لازم است). فایل‌های قدیمی را پاک کنید یا اشتراک بگیرید.`, true);
-    if (this.monthUsage(user).up + size > this.limits(user).upCap) return answer('به سقف مصرف منصفانه آپلود این ماه رسیده‌اید.', true);
+    if (f.storage === 'cf') {
+      if (size > this.cfFree()) return answer(`فضای Cloudflare کافی نیست (${fmtSize(size)} لازم است، آزاد: ${fmtSize(this.cfFree())}).`, true);
+    } else {
+      if (size > this.freeFor(user)) return answer(`فضای کافی ندارید (${fmtSize(size)} لازم است). فایل‌های قدیمی را پاک کنید یا اشتراک بگیرید.`, true);
+      if (this.monthUsage(user).up + size > this.limits(user).upCap) return answer('به سقف مصرف منصفانه آپلود این ماه رسیده‌اید.', true);
+    }
     const ext = q.audio ? 'm4a' : 'mp4';
     this.sql.exec(`UPDATE files SET status='link_download', fmt=?, size=?, kind=?, mime=?, obj_key=? WHERE id=?`,
       JSON.stringify(q), size, q.audio ? 'audio' : 'video', q.audio ? 'audio/mp4' : 'video/mp4', `f/${id}/${cleanName(f.name)}.${ext}`, id);
-    await this.edit(f.chat_id, f.msg_id, `⏳ <b>${esc(f.name)}</b> — ${esc(q.label)}\nدر حال دانلود و انتقال به تلویزیون…`, [[{ text: '❌ لغو', callback_data: `c:${id}` }]]);
+    await this.edit(f.chat_id, f.msg_id, `⏳ <b>${esc(f.name)}</b> — ${esc(q.label)}${f.storage === 'cf' ? ' · ☁️ Cloudflare' : ''}\nدر حال دانلود و انتقال به تلویزیون…`, [[{ text: '❌ لغو', callback_data: `c:${id}` }]]);
     await this.wakeHelper();
     return answer('دانلود شروع شد');
   }
@@ -1232,33 +1236,132 @@ export class Store extends DurableObject {
   }
 
   // ---- owner only: put a link on the TV without downloading it ("stream from the site")
-  remoteName(href) {
-    try {
-      const u = new URL(href);
-      const seg = decodeURIComponent(u.pathname.split('/').filter(Boolean).pop() || '');
-      const base = seg.replace(/\.[a-z0-9]{2,4}$/i, '').replace(/[-_+]+/g, ' ').trim();
-      return cleanName(base && !/^\d+$/.test(base) ? base : u.hostname).slice(0, 80);
-    } catch { return 'link'; }
+
+  // ---- owner only: two storages. Every save asks: Cloudflare (chunks in this Durable Object) or Arvan.
+  cfFree() { return Math.max(0, CF_CAP - this.ctx.storage.sql.databaseSize); }
+  cfUrl(f) { return `${this.env.PUBLIC_URL}/f/${f.id}/${encodeURIComponent(cleanName(f.name))}`; }
+  storeKb(id) {
+    return [
+      [{ text: '☁️ Cloudflare', callback_data: `sc:${id}:cf` }, { text: '🇮🇷 آروان', callback_data: `sc:${id}:ar` }],
+      [{ text: '❌ لغو', callback_data: `c:${id}` }],
+    ];
   }
 
-  async linkChoice(cb, user, id, mode) {
-    const answer = (text) => this.tg('answerCallbackQuery', { callback_query_id: cb.id, text });
-    const f = this.one(`SELECT * FROM files WHERE id=? AND status='link_pending' AND owner=?`, id, user.id);
+  async storeChoice(cb, user, id, target) {
+    const answer = (text, alert = false) => this.tg('answerCallbackQuery', { callback_query_id: cb.id, text, show_alert: alert });
+    const f = this.one(`SELECT * FROM files WHERE id=? AND status='store_pending' AND owner=?`, id, user.id);
     if (!f) return answer('این درخواست منقضی شده است');
-    if (mode === 'stream') {
-      const ext = (new URL(f.source_url).pathname.split('.').pop() || '').toLowerCase();
-      const kind = ['jpg', 'jpeg', 'png', 'webp', 'gif'].includes(ext) ? 'image' : ['mp3', 'm4a', 'ogg', 'flac', 'wav'].includes(ext) ? 'audio' : 'video';
-      this.sql.exec(`UPDATE files SET status='ready', storage='remote', name=?, kind=?, size=0 WHERE id=?`, this.remoteName(f.source_url), kind, id);
-      await this.writeManifest(user.id);
-      const hasTv = this.one('SELECT 1 AS x FROM devices WHERE user_id=?', user.id);
-      await this.edit(f.chat_id, f.msg_id, `📺 <b>${esc(this.remoteName(f.source_url))}</b> به تلویزیون اضافه شد.\nپخش مستقیم از خود سایت انجام می‌شود و چیزی ذخیره نشد.${hasTv ? '' : '\n(هنوز تلویزیونی وصل نیست.)'}\n\n⚠️ اگر لینک موقت باشد، ممکن است بعد از مدتی پخش نشود.`,
-        [[{ text: '🗑 حذف از تلویزیون', callback_data: `d:${id}:0` }]]);
-      return answer('به تلویزیون اضافه شد');
+    const cf = target === 'cf';
+    if (cf && f.size > this.cfFree()) return answer(`فضای Cloudflare کافی نیست (آزاد: ${fmtSize(this.cfFree())}).`, true);
+    if (f.source_url) {
+      this.sql.exec(`UPDATE files SET status='link_probe', storage=? WHERE id=?`, cf ? 'cf' : 'arvan', id);
+      await this.edit(f.chat_id, f.msg_id, `🔎 در حال بررسی لینک… (${cf ? '☁️ Cloudflare' : '🇮🇷 آروان'})\nکیفیت‌های موجود تا حدود یک دقیقه دیگر نمایش داده می‌شود.`, [[{ text: '❌ لغو', callback_data: `c:${id}` }]]);
+      await this.wakeHelper();
+      return answer();
     }
-    this.sql.exec(`UPDATE files SET status='link_probe' WHERE id=?`, id);
-    await this.edit(f.chat_id, f.msg_id, `🔎 در حال بررسی لینک…\nکیفیت‌های موجود تا حدود یک دقیقه دیگر نمایش داده می‌شود.`, [[{ text: '❌ لغو', callback_data: `c:${id}` }]]);
-    await this.wakeHelper();
-    return answer();
+    const st = !cf && f.size > this.freeFor(user) ? 'waiting_space' : 'queued';
+    this.sql.exec(`UPDATE files SET status=?, storage=?, obj_key=? WHERE id=?`, st, cf ? 'cf' : 'arvan', cf ? null : this.fileKey(f), id);
+    await this.afterStatus(id);
+    return answer(cf ? 'Cloudflare' : 'آروان');
+  }
+
+  // Write a whole buffer into chunks (Telegram files, max 20 MB).
+  writeChunks(id, buf, first = 0) {
+    const bytes = new Uint8Array(buf);
+    let idx = first;
+    for (let o = 0; o < bytes.length; o += CHUNK) {
+      this.sql.exec('INSERT OR REPLACE INTO chunks(file_id, idx, data) VALUES (?,?,?)', id, idx++, bytes.slice(o, o + CHUNK).buffer);
+    }
+    return idx;
+  }
+
+  // Helper uploads a downloaded file in parts: PUT /helper/upload/<id>?offset=N (N a multiple of CHUNK).
+  async helperUpload(req, url, id) {
+    const f = this.one(`SELECT * FROM files WHERE id=? AND storage='cf' AND status IN ('link_download','helper_uploading')`, id);
+    if (!f) return new Response('no such job', { status: 404 });
+    const offset = Number(url.searchParams.get('offset') || 0);
+    if (!Number.isInteger(offset) || offset < 0 || offset % CHUNK) return new Response('bad offset', { status: 400 });
+    const len = Number(req.headers.get('content-length') || 0);
+    if (len > this.cfFree()) return new Response('Cloudflare storage full', { status: 507 });
+    let idx = offset / CHUNK;
+    this.sql.exec('DELETE FROM chunks WHERE file_id=? AND idx>=?', id, idx);
+    const reader = req.body.getReader();
+    let buf = new Uint8Array(CHUNK), fill = 0, total = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      let o = 0;
+      while (o < value.length) {
+        const n = Math.min(CHUNK - fill, value.length - o);
+        buf.set(value.subarray(o, o + n), fill);
+        fill += n; o += n; total += n;
+        if (fill === CHUNK) {
+          this.sql.exec('INSERT INTO chunks(file_id, idx, data) VALUES (?,?,?)', id, idx++, buf.buffer);
+          buf = new Uint8Array(CHUNK); fill = 0;
+        }
+      }
+    }
+    if (fill) this.sql.exec('INSERT INTO chunks(file_id, idx, data) VALUES (?,?,?)', id, idx++, buf.slice(0, fill).buffer);
+    this.sql.exec(`UPDATE files SET status='helper_uploading' WHERE id=?`, id);
+    return Response.json({ ok: true, received: total });
+  }
+
+  async helperThumb(req, id) {
+    const f = this.one(`SELECT id FROM files WHERE id=? AND storage='cf' AND status IN ('link_download','helper_uploading')`, id);
+    if (!f) return new Response('no such job', { status: 404 });
+    const buf = await req.arrayBuffer();
+    if (!buf.byteLength || buf.byteLength > 1_000_000) return new Response('bad thumb', { status: 400 });
+    this.sql.exec('UPDATE files SET thumb=? WHERE id=?', buf, id);
+    return Response.json({ ok: true });
+  }
+
+  cfSize(id) { return this.one('SELECT COALESCE(SUM(length(data)),0) AS s FROM chunks WHERE file_id=?', id).s; }
+
+  serveThumb(id) {
+    const f = this.one(`SELECT thumb FROM files WHERE id=? AND status='ready'`, id);
+    if (!f || !f.thumb) return new Response('Not found', { status: 404 });
+    return new Response(f.thumb, { headers: { 'content-type': 'image/jpeg', 'cache-control': 'public, max-age=604800' } });
+  }
+
+  // Files kept in this Durable Object (Cloudflare storage, and the old single-user ones), with Range support.
+  serveFile(req, id) {
+    const f = this.one(`SELECT id,name,mime,size,status,storage,obj_key FROM files WHERE id=?`, id);
+    if (!f || f.status !== 'ready') return new Response('File not found', { status: 404 });
+    if (f.storage === 'arvan') return Response.redirect(this.publicUrl(f.obj_key), 302);
+    if (f.storage !== 'cf' && f.storage !== 'do') return new Response('Not available', { status: 404 });
+    const size = f.size;
+    let start = 0, end = size - 1, status = 200;
+    const range = req.headers.get('range');
+    const m = range && /^bytes=(\d*)-(\d*)$/.exec(range.trim());
+    if (m && (m[1] || m[2])) {
+      if (m[1]) { start = Number(m[1]); if (m[2]) end = Math.min(Number(m[2]), size - 1); }
+      else { start = Math.max(0, size - Number(m[2])); }
+      if (start > end || start >= size) {
+        return new Response(null, { status: 416, headers: { 'content-range': `bytes */${size}` } });
+      }
+      status = 206;
+    }
+    const headers = {
+      'content-type': f.mime || guessMime(f.name), 'accept-ranges': 'bytes', 'content-length': String(end - start + 1),
+      'content-disposition': this.disposition(f.name), 'cache-control': 'private, max-age=3600',
+    };
+    if (status === 206) headers['content-range'] = `bytes ${start}-${end}/${size}`;
+    if (req.method === 'HEAD') return new Response(null, { status, headers });
+    const sql = this.sql;
+    let idx = Math.floor(start / CHUNK), pos = start;
+    const stream = new ReadableStream({
+      pull(ctrl) {
+        if (pos > end) return ctrl.close();
+        const row = sql.exec('SELECT data FROM chunks WHERE file_id=? AND idx=?', id, idx).toArray()[0];
+        if (!row) return ctrl.error(new Error('missing chunk'));
+        const data = new Uint8Array(row.data);
+        const base = idx * CHUNK;
+        const from = pos - base, to = Math.min(data.length, end - base + 1);
+        ctrl.enqueue(data.slice(from, to));
+        pos = base + to; idx++;
+      },
+    }, { highWaterMark: 0 });
+    return new Response(stream, { status, headers });
   }
 
   tvStatus(user) {
@@ -1287,8 +1390,8 @@ export class Store extends DurableObject {
     const u = this.user(uid);
     const lim = this.limits(u);
     const mu = this.monthUsage(u);
-    const files = this.q(`SELECT id,name,mime,size,kind,width,height,duration,created_at,obj_key,thumb_key,storage,source_url
-      FROM files WHERE owner=? AND status='ready' AND storage IN ('arvan','remote') ORDER BY created_at DESC`, uid);
+    const files = this.q(`SELECT id,name,mime,size,kind,width,height,duration,created_at,obj_key,thumb_key,storage,source_url,thumb IS NOT NULL AS has_thumb
+      FROM files WHERE owner=? AND status='ready' AND storage IN ('arvan','remote','cf') ORDER BY created_at DESC`, uid);
     const manifest = {
       v: 1,
       updated_at: Date.now(),
@@ -1304,7 +1407,8 @@ export class Store extends DurableObject {
       files: files.map((f) => ({
         id: f.id, name: f.name, mime: f.mime, size: f.size, kind: f.kind,
         width: f.width, height: f.height, duration: f.duration, created_at: f.created_at,
-        url: f.storage === 'remote' ? f.source_url : this.publicUrl(f.obj_key), thumb: f.thumb_key ? this.publicUrl(f.thumb_key) : null,
+        url: f.storage === 'remote' ? f.source_url : f.storage === 'cf' ? this.cfUrl(f) : this.publicUrl(f.obj_key),
+        thumb: f.storage === 'cf' ? (f.has_thumb ? `${this.env.PUBLIC_URL}/t/${f.id}` : null) : f.thumb_key ? this.publicUrl(f.thumb_key) : null,
       })),
     };
     await this.putJson(`m/${d.token}.json`, manifest);
@@ -1326,13 +1430,16 @@ export class Store extends DurableObject {
       return this.send(m.chat.id, '⚠️ به سقف <b>مصرف منصفانه</b> آپلود این ماه رسیده‌اید. از اول ماه بعد یا با ارتقای اشتراک می‌توانید دوباره فایل بفرستید.', kb, m.message_id);
     }
     const id = randomId();
-    const status = media.size > this.freeFor(user) ? 'waiting_space' : 'queued';
+    const owner = this.isAdmin(user.id);
+    const status = owner ? 'store_pending' : media.size > this.freeFor(user) ? 'waiting_space' : 'queued';
     this.sql.exec(`INSERT INTO files(id,name,mime,size,kind,status,tg_file_id,thumb_file_id,width,height,duration,chat_id,created_at,owner,storage)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'arvan')`,
       id, media.name, media.mime, media.size, media.kind, status, media.fileId, media.thumbId,
       media.width, media.height, media.duration, m.chat.id, Date.now(), user.id);
     this.sql.exec('UPDATE files SET obj_key=? WHERE id=?', this.fileKey({ id, name: media.name }), id);
-    const sent = await this.send(m.chat.id, `⏳ <b>${esc(media.name)}</b> (${fmtSize(media.size)})`, null, m.message_id);
+    const sent = owner
+      ? await this.send(m.chat.id, `📥 <b>${esc(media.name)}</b> (${fmtSize(media.size)})\nکجا ذخیره شود؟\n<i>☁️ Cloudflare آزاد: ${fmtSize(this.cfFree())} — 🇮🇷 آروان آزاد: ${fmtSize(this.freeFor(user))}</i>`, this.storeKb(id), m.message_id)
+      : await this.send(m.chat.id, `⏳ <b>${esc(media.name)}</b> (${fmtSize(media.size)})`, null, m.message_id);
     if (sent.ok) this.sql.exec('UPDATE files SET msg_id=? WHERE id=?', sent.result.message_id, id);
     this.sql.exec('UPDATE files SET src_msg_id=? WHERE id=?', m.message_id, id);
     await this.afterStatus(id);
@@ -1398,12 +1505,12 @@ export class Store extends DurableObject {
 
   listView(uid, page) {
     const total = this.one(`SELECT COUNT(*) AS c FROM files WHERE status='ready' AND owner=?`, uid).c;
-    const rows = this.q(`SELECT id,name,size,created_at,CASE WHEN storage='remote' THEN 'remote' ELSE kind END AS kind FROM files WHERE status='ready' AND owner=?
+    const rows = this.q(`SELECT id,name,size,created_at,CASE WHEN storage='remote' THEN 'remote' ELSE kind END AS kind, storage FROM files WHERE status='ready' AND owner=?
       ORDER BY created_at DESC LIMIT ? OFFSET ?`, uid, PAGE, page * PAGE);
     if (!total) return { text: `📭 هنوز فایلی ندارید. هر فایلی بفرستید اینجا و روی تلویزیون نمایش داده می‌شود.\n\n${this.usageLine(uid)}`, kb: null };
     const icon = { video: '🎬', image: '🖼', audio: '🎵', file: '📄', remote: '🌐' };
     const lines = rows.map((f, i) =>
-      `${page * PAGE + i + 1}. ${icon[f.kind] || '📄'} ${esc(short(f.name, 40))}\n     ${fmtSize(f.size)} · ${fmtDate(f.created_at)}`);
+      `${page * PAGE + i + 1}. ${icon[f.kind] || '📄'}${f.storage === 'cf' ? '☁️' : ''} ${esc(short(f.name, 40))}\n     ${fmtSize(f.size)} · ${fmtDate(f.created_at)}`);
     const kb = [];
     for (let i = 0; i < rows.length; i += 4) {
       kb.push(rows.slice(i, i + 4).map((f, j) => ({ text: `🗑 ${page * PAGE + i + j + 1}`, callback_data: `d:${f.id}:${page}` })));
@@ -1470,8 +1577,7 @@ export class Store extends DurableObject {
         return answer('پذیرفته شد');
       }
       case 'lq': return this.chooseQuality(cb, user, a, b);
-      case 'ls': return this.isAdmin(user.id) ? this.linkChoice(cb, user, a, 'stream') : answer();
-      case 'lp': return this.isAdmin(user.id) ? this.linkChoice(cb, user, a, 'download') : answer();
+      case 'sc': return this.isAdmin(user.id) && (b === 'cf' || b === 'ar') ? this.storeChoice(cb, user, a, b) : answer();
       case 'sup': await this.supportStart(chatId, user); return answer();
       case 'se_end': this.setState(user.id, null); await this.send(chatId, 'گفتگو با پشتیبانی بسته شد. هر وقت سؤالی داشتید، دوباره «💬 پشتیبانی» را بزنید.', this.menuKeyboard()); return answer();
       case 'tc': this.setState(user.id, 'tv'); await this.send(chatId, '🔢 کد ۸ حرفی که روی صفحه تلویزیون است را بفرستید:'); return answer();
@@ -1996,6 +2102,13 @@ export class Store extends DurableObject {
     this.sql.exec(`UPDATE files SET status='uploading' WHERE id=?`, f.id);
     try {
       const { res, size } = await this.tgFile(f.tg_file_id);
+      if (f.storage === 'cf') {
+        const buf = await res.arrayBuffer();
+        this.sql.exec('DELETE FROM chunks WHERE file_id=?', f.id);
+        this.writeChunks(f.id, buf);
+        await this.finishFile(f, buf.byteLength);
+        return;
+      }
       const { readable, writable } = new FixedLengthStream(size);
       res.body.pipeTo(writable).catch(() => {});
       await this.s3put(f.obj_key, readable, { type: f.mime || guessMime(f.name), disposition: this.disposition(f.name) });
@@ -2030,6 +2143,7 @@ export class Store extends DurableObject {
       const { res } = await this.tgFile(f.thumb_file_id);
       const buf = await res.arrayBuffer();
       if (buf.byteLength > 1_000_000) return;
+      if (f.storage === 'cf') { this.sql.exec('UPDATE files SET thumb=? WHERE id=?', buf, f.id); return; }
       const key = `t/${f.id}.jpg`;
       await this.s3put(key, buf, { type: 'image/jpeg', cache: 'public, max-age=604800' });
       this.sql.exec('UPDATE files SET thumb_key=? WHERE id=?', key, f.id);
@@ -2049,7 +2163,7 @@ export class Store extends DurableObject {
     try { await this.bucketWatchdog(); } catch (e) { console.log('watchdog failed', String(e)); }
     try { await this.dailyBackup(); } catch (e) { console.log('backup failed', String(e)); }
     this.sql.exec('DELETE FROM seen2 WHERE at < ?', now - 3 * DAY);
-    this.sql.exec(`DELETE FROM files WHERE status IN ('link_choose','link_probe','link_pending') AND created_at < ?`, now - 6 * 3600e3);
+    this.sql.exec(`DELETE FROM files WHERE status IN ('link_choose','link_probe','link_pending','store_pending') AND created_at < ?`, now - 6 * 3600e3);
     this.sql.exec('DELETE FROM seen');
     this.sql.exec('DELETE FROM pairs');
     for (const p of this.q('SELECT code FROM tv_pairs WHERE created_at < ? LIMIT 10', now - PAIR_TTL)) {
@@ -2146,12 +2260,6 @@ export class Store extends DurableObject {
   }
 
   // ================================================================ legacy + migration
-  serveLegacy(req, id) {
-    const f = this.one(`SELECT id,name,mime,size,status,storage,obj_key FROM files WHERE id=?`, id);
-    if (!f || f.status !== 'ready') return new Response('File not found', { status: 404 });
-    if (f.storage === 'arvan') return Response.redirect(this.publicUrl(f.obj_key), 302);
-    return new Response('Not available', { status: 404 });
-  }
 
   // Move one in-DO file (from the single-user version) to Arvan. Returns what happened.
   async migrateOne() {
@@ -2201,7 +2309,7 @@ export class Store extends DurableObject {
     }
     if (p === '/api/admin/files') {
       const owner = url.searchParams.get('owner');
-      const cols = 'id,name,size,status,kind,owner,created_at';
+      const cols = 'id,name,size,status,kind,owner,created_at,storage';
       return Response.json(owner
         ? this.q(`SELECT ${cols} FROM files WHERE owner=? ORDER BY created_at`, Number(owner))
         : this.q(`SELECT ${cols} FROM files ORDER BY created_at`));
@@ -2217,10 +2325,10 @@ export class Store extends DurableObject {
 
   // ================================================================ large-file helper (GitHub Actions)
   helperJobs() {
-    const jobs = this.q(`SELECT id,name,size,mime,tg_file_id,obj_key,status,source_url,fmt FROM files
+    const jobs = this.q(`SELECT id,name,size,mime,tg_file_id,obj_key,status,source_url,fmt,storage FROM files
         WHERE status IN ('helper_uploading','link_probe','link_download') AND source_url IS NOT NULL ORDER BY created_at`)
       .map((j) => ({
-        id: j.id, name: j.name, size: j.size, mime: j.mime, tg_file_id: j.tg_file_id, obj_key: j.obj_key,
+        id: j.id, name: j.name, size: j.size, mime: j.mime, tg_file_id: j.tg_file_id, obj_key: j.obj_key, storage: j.storage, chunk: CHUNK,
         type: j.status === 'link_probe' ? 'probe' : j.source_url ? 'link' : 'tg',
         url: j.source_url, fmt: j.fmt ? JSON.parse(j.fmt) : null, disposition: this.disposition(j.name),
       }));
@@ -2262,8 +2370,8 @@ export class Store extends DurableObject {
     if (extra.thumb_key) this.sql.exec('UPDATE files SET thumb_key=? WHERE id=?', extra.thumb_key, id);
     if (extra.duration) this.sql.exec('UPDATE files SET duration=? WHERE id=?', Math.round(extra.duration), id);
     if (extra.width) this.sql.exec('UPDATE files SET width=?, height=? WHERE id=?', extra.width, extra.height || null, id);
-    const size = await this.s3head(f.obj_key);
-    if (!size) return new Response('object missing in Arvan', { status: 409 });
+    const size = f.storage === 'cf' ? this.cfSize(id) : await this.s3head(f.obj_key);
+    if (!size) return new Response(f.storage === 'cf' ? 'nothing uploaded' : 'object missing in Arvan', { status: 409 });
     await this.finishFile(this.one('SELECT * FROM files WHERE id=?', id), size);
     return Response.json({ ok: true, size });
   }
@@ -2293,7 +2401,7 @@ export default {
     if (p === `/tga/${env.ADMIN_WEBHOOK_SECRET}` && req.method === 'POST') {
       return secretOk(env.ADMIN_WEBHOOK_SECRET) ? fwd('/tga') : new Response('forbidden', { status: 403 });
     }
-    if (/^\/f\//.test(p) && (req.method === 'GET' || req.method === 'HEAD')) return fwd(p);
+    if (/^\/[ft]\//.test(p) && (req.method === 'GET' || req.method === 'HEAD')) return fwd(p);
     if (p.startsWith('/api/')) return fwd(p);
     if (p.startsWith('/helper/')) {
       const h = req.headers.get('authorization') || '';
