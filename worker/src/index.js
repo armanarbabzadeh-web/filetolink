@@ -20,6 +20,9 @@ const PAIR_TTL = 15 * 60_000;
 const MAINT_EVERY = 30 * 60_000;
 const MANIFEST_REFRESH = 3 * DAY;     // presigned report URL lives 7 days
 const WELCOME = { plan: 'p500', days: 7 };
+const REF_BONUS = 500e6;          // referral reward
+const REF_DAYS = 7;
+const REF_MAX_PER_MONTH = 10;
 
 const PLANS = {
   free: { title: 'رایگان', quota: 100e6, price: 0, fw: 4 },
@@ -190,6 +193,8 @@ export class Store extends DurableObject {
         name TEXT, created_at INTEGER NOT NULL, last_seen INTEGER);
       CREATE TABLE IF NOT EXISTS tv_pairs(code TEXT PRIMARY KEY, created_at INTEGER NOT NULL, user_id INTEGER);
       CREATE TABLE IF NOT EXISTS seen2(id TEXT PRIMARY KEY, at INTEGER);
+      CREATE TABLE IF NOT EXISTS bonuses(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, bytes INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL, created_at INTEGER NOT NULL, from_user INTEGER, done INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
       CREATE TABLE IF NOT EXISTS support(admin_msg_id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, created_at INTEGER);
     `);
@@ -200,7 +205,7 @@ export class Store extends DurableObject {
     });
     this.addCols('payments', { months: 'INTEGER NOT NULL DEFAULT 1' });
     this.addCols('support', { answered_at: 'INTEGER' });
-    this.addCols('users', { terms_at: 'INTEGER' });
+    this.addCols('users', { terms_at: 'INTEGER', ref_code: 'TEXT', referred_by: 'INTEGER', ref_rewarded: 'INTEGER NOT NULL DEFAULT 0' });
     this.addCols('devices', { manifest_at: 'INTEGER', rep_month: 'TEXT', rep_bytes: 'INTEGER NOT NULL DEFAULT 0' });
     this.sql.exec('UPDATE files SET owner=? WHERE owner IS NULL', Number(env.OWNER_ID));
     this.sql.exec('CREATE INDEX IF NOT EXISTS files_owner ON files(owner, created_at)');
@@ -267,7 +272,8 @@ export class Store extends DurableObject {
     if (this.isAdmin(u.id)) return { plan: 'admin', title: 'مدیر', quota: Infinity, upCap: Infinity, watchCap: Infinity };
     const p = PLANS[u.plan] || PLANS.free;
     const up = Number(this.setting('mult_up')) || 10;
-    return { plan: u.plan, title: p.title, quota: p.quota, upCap: p.quota * up, watchCap: p.quota * this.fairWatch(u.plan) };
+    const quota = p.quota + this.bonusBytes(u.id);
+    return { plan: u.plan, title: p.title, quota, upCap: quota * up, watchCap: quota * this.fairWatch(u.plan) };
   }
   monthUsage(u) {
     const mk = monthKey();
@@ -395,12 +401,20 @@ export class Store extends DurableObject {
 
   // ================================================================ Telegram
   token(bot) { return bot === 'admin' ? this.env.ADMIN_BOT_TOKEN : this.env.BOT_TOKEN; }
+  tgBase() { return this.env.TG_API || 'https://api.telegram.org'; } // TG_API is only set for offline local tests
 
   async tg(method, body, bot = 'main') {
     this.sub = (this.sub || 0) + 1;
-    const r = await fetch(`https://api.telegram.org/bot${this.token(bot)}/${method}`, {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
-    });
+    let r;
+    try {
+      r = await fetch(`${this.tgBase()}/bot${this.token(bot)}/${method}`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+        signal: AbortSignal.timeout(20_000),
+      });
+    } catch (e) {
+      console.log('tg network error', bot, method, String(e));
+      return { ok: false, description: 'network error' };
+    }
     const j = await r.json().catch(() => ({ ok: false, description: `HTTP ${r.status}` }));
     if (!j.ok && !/not modified/.test(j.description || '')) console.log('tg error', bot, method, j.description);
     return j;
@@ -428,7 +442,7 @@ export class Store extends DurableObject {
   async tgFile(fileId) {
     const gf = await this.tg('getFile', { file_id: fileId });
     if (!gf.ok) throw new Error(gf.description || 'getFile failed');
-    const r = await fetch(`https://api.telegram.org/file/bot${this.env.BOT_TOKEN}/${gf.result.file_path}`);
+    const r = await fetch(`${this.tgBase()}/file/bot${this.env.BOT_TOKEN}/${gf.result.file_path}`);
     if (!r.ok || !r.body) throw new Error(`download failed: HTTP ${r.status}`);
     return { res: r, size: gf.result.file_size };
   }
@@ -505,6 +519,7 @@ export class Store extends DurableObject {
     if (name === 'start') {
       if (arg.startsWith('tv_')) return this.linkTv(chat, user, arg.slice(3));
       if (arg.startsWith('gift_')) return this.redeem(chat, user, arg.slice(5));
+      if (arg.startsWith('ref_')) this.noteReferral(user, arg.slice(4));
       return this.sendMenu(chat, user, true);
     }
     if (name === 'list' || name === 'files') return this.sendList(chat, user.id, 0);
@@ -519,6 +534,7 @@ export class Store extends DurableObject {
     if (name === 'app' || name === 'install') return this.sendApp(chat);
     if (name === 'support') return this.supportStart(chat, user);
     if (name === 'rules' || name === 'terms') return this.sendTerms(chat, user, true);
+    if (name === 'invite' || name === 'ref') { const v = this.inviteView(user); return this.send(chat, v.text, v.kb); }
     if (name === 'help' || name === 'guide') return this.sendTutorial(chat);
     return this.sendMenu(chat, user);
   }
@@ -528,6 +544,7 @@ export class Store extends DurableObject {
       [{ text: '📦 خرید یا تمدید اشتراک', callback_data: 'b' }],
       [{ text: '📂 فایل‌های من', callback_data: 'l:0' }, { text: '👤 حساب من', callback_data: 'a' }],
       [{ text: '🎁 کد هدیه', callback_data: 'g' }, { text: '📺 تلویزیون', callback_data: 't' }],
+      [{ text: '👥 دعوت دوستان (۵۰۰ مگ هدیه)', callback_data: 'inv' }],
       [{ text: '📲 دریافت اپ تلویزیون', callback_data: 'app' }, { text: '📖 آموزش', callback_data: 'help' }],
       [{ text: '💬 پشتیبانی', callback_data: 'sup' }, { text: '📜 قوانین', callback_data: 'tr' }],
     ];
@@ -551,6 +568,11 @@ export class Store extends DurableObject {
     const mu = this.monthUsage(user);
     const lines = [`👤 پلن: <b>${lim.title}</b>`];
     if (user.expires_at && user.plan !== 'free') lines.push(`⏳ اعتبار تا ${fmtDate(user.expires_at, false)}`);
+    const bonus = this.isAdmin(user.id) ? 0 : this.bonusBytes(user.id);
+    if (bonus) {
+      const next = this.one('SELECT MIN(expires_at) AS e FROM bonuses WHERE user_id=? AND expires_at > ?', user.id, Date.now()).e;
+      lines.push(`🎁 فضای هدیه دعوت: ${fmtSize(bonus)} (اولین انقضا ${fmtDate(next, false)})`);
+    }
     lines.push(`💾 فضا: ${bar(pctOf(used, lim.quota))} ${fmtSize(used)} از ${fmtSize(lim.quota)}`);
     const tv = this.one('SELECT name FROM devices WHERE user_id=?', user.id);
     lines.push(`📺 تلویزیون: ${tv ? 'وصل است' : 'وصل نیست'}`);
@@ -652,7 +674,7 @@ export class Store extends DurableObject {
     } catch (e) {
       form.set('text', caption + '\n(دریافت تصویر رسید ممکن نشد)');
     }
-    const r = await fetch(`https://api.telegram.org/bot${this.env.ADMIN_BOT_TOKEN}/${method}`, { method: 'POST', body: form });
+    const r = await fetch(`${this.tgBase()}/bot${this.env.ADMIN_BOT_TOKEN}/${method}`, { method: 'POST', body: form });
     const j = await r.json().catch(() => ({}));
     if (j.ok) this.sql.exec('UPDATE payments SET admin_msg_id=? WHERE id=?', j.result.message_id, pay.id);
     else console.log('receipt to admin failed', j.description);
@@ -771,7 +793,7 @@ export class Store extends DurableObject {
         form.set('parse_mode', 'HTML');
         form.set('document', await res.blob(), 'TeleTVShare.apk');
         this.sub = (this.sub || 0) + 1;
-        r = await fetch(`https://api.telegram.org/bot${this.env.BOT_TOKEN}/sendDocument`, { method: 'POST', body: form }).then((x) => x.json()).catch(() => ({ ok: false }));
+        r = await fetch(`${this.tgBase()}/bot${this.env.BOT_TOKEN}/sendDocument`, { method: 'POST', body: form }).then((x) => x.json()).catch(() => ({ ok: false }));
       }
     }
     if (r.ok && r.result?.document?.file_id) this.meta('app_file_id', r.result.document.file_id);
@@ -785,7 +807,7 @@ export class Store extends DurableObject {
     if (doc.file_size > TG_BOT_MAX) return A('❌ فایل APK باید کمتر از ۲۰ مگابایت باشد.');
     const gf = await this.tg('getFile', { file_id: doc.file_id }, 'admin');
     if (!gf.ok) return A(`❌ دریافت فایل ناموفق بود: ${esc(gf.description)}`);
-    const res = await fetch(`https://api.telegram.org/file/bot${this.env.ADMIN_BOT_TOKEN}/${gf.result.file_path}`);
+    const res = await fetch(`${this.tgBase()}/file/bot${this.env.ADMIN_BOT_TOKEN}/${gf.result.file_path}`);
     const buf = await res.arrayBuffer();
     const key = 'app/TeleTVShare.apk';
     await this.s3put(key, buf, {
@@ -818,14 +840,14 @@ export class Store extends DurableObject {
     if (keyboard) form.set('reply_markup', JSON.stringify({ inline_keyboard: keyboard }));
     let method = 'sendMessage';
     if (gf.ok && (gf.result.file_size || 0) <= TG_BOT_MAX) {
-      const res = await fetch(`https://api.telegram.org/file/bot${this.token(fromBot)}/${gf.result.file_path}`);
+      const res = await fetch(`${this.tgBase()}/file/bot${this.token(fromBot)}/${gf.result.file_path}`);
       method = isPhoto ? 'sendPhoto' : 'sendDocument';
       form.set(isPhoto ? 'photo' : 'document', await res.blob(), isPhoto ? 'photo.jpg' : (gf.result.file_path.split('/').pop() || 'file'));
     } else {
       form.set('text', caption + '\n(فایل پیوست قابل انتقال نبود)');
     }
     this.sub = (this.sub || 0) + 1;
-    const r = await fetch(`https://api.telegram.org/bot${this.token(toBot)}/${method}`, { method: 'POST', body: form });
+    const r = await fetch(`${this.tgBase()}/bot${this.token(toBot)}/${method}`, { method: 'POST', body: form });
     return r.json().catch(() => ({ ok: false }));
   }
 
@@ -975,6 +997,8 @@ export class Store extends DurableObject {
       `<b>${links ? '۶' : '۵'}. اشتراک</b>`,
       'از «📦 خرید یا تمدید اشتراک» پلن و مدت را انتخاب کنید، مبلغ را کارت‌به‌کارت کنید و عکس رسید را بفرستید. اگر کد هدیه دارید، از «🎁 کد هدیه» وارد کنید.',
       '',
+      `<b>🎁 دعوت دوستان:</b> از «👥 دعوت دوستان» لینک خودتان را بگیرید؛ هر دوستی که عضو شود ${fmtSize(REF_BONUS)} فضا برای ${faNum(REF_DAYS)} روز هدیه می‌گیرید.`,
+      '',
       'قوانین استفاده را از «📜 قوانین» ببینید. سؤالی بود؟ «💬 پشتیبانی» را بزنید.',
     ].join('\n');
   }
@@ -1014,6 +1038,93 @@ export class Store extends DurableObject {
     await this.send(m.chat.id, this.termsText() + '\n\n⚠️ قبل از ارسال اولین فایل، لطفاً قوانین را بپذیرید و دوباره فایل یا لینک را بفرستید.',
       [[{ text: '✅ قوانین را می‌پذیرم', callback_data: 'ta' }]], m.message_id);
     return true;
+  }
+
+  // ================================================================ referrals
+  // A new user who joins through someone's link and accepts the rules earns the inviter
+  // REF_BONUS of extra space for REF_DAYS. Bonuses stack; each one expires on its own.
+  refCode(uid) {
+    let u = this.user(uid);
+    if (!u.ref_code) {
+      let code;
+      do code = randomId(8, 'abcdefghjkmnpqrstuvwxyz23456789'); while (this.one('SELECT 1 AS x FROM users WHERE ref_code=?', code));
+      this.sql.exec('UPDATE users SET ref_code=? WHERE id=?', code, uid);
+      u = this.user(uid);
+    }
+    return u.ref_code;
+  }
+
+  refLink(uid) { return `https://t.me/${this.env.BOT_USERNAME}?start=ref_${this.refCode(uid)}`; }
+
+  bonusBytes(uid) {
+    return this.one('SELECT COALESCE(SUM(bytes),0) AS s FROM bonuses WHERE user_id=? AND expires_at > ?', uid, Date.now()).s;
+  }
+
+  // Called from /start ref_<code> for brand-new users only.
+  noteReferral(user, code) {
+    const inviter = this.one('SELECT id FROM users WHERE ref_code=?', String(code).toLowerCase());
+    if (!inviter || inviter.id === user.id || !user._welcomed) return;
+    this.sql.exec('UPDATE users SET referred_by=? WHERE id=? AND referred_by IS NULL', inviter.id, user.id);
+  }
+
+  // Called when the invited user accepts the rules.
+  async rewardReferral(user) {
+    const u = this.user(user.id);
+    if (!u.referred_by || u.ref_rewarded) return;
+    this.sql.exec('UPDATE users SET ref_rewarded=1 WHERE id=?', u.id);
+    const inviter = this.user(u.referred_by);
+    if (!inviter || inviter.banned) return;
+    const monthAgo = Date.now() - 30 * DAY;
+    const recent = this.one('SELECT COUNT(*) AS c FROM bonuses WHERE user_id=? AND created_at > ?', inviter.id, monthAgo).c;
+    if (recent >= REF_MAX_PER_MONTH) {
+      await this.send(inviter.id, `👥 ${esc(u.first_name || 'یک دوست')} با لینک شما عضو شد. سقف هدیه دعوت این ماه (${faNum(REF_MAX_PER_MONTH)} نفر) پر شده است.`);
+      return;
+    }
+    const exp = Date.now() + REF_DAYS * DAY;
+    this.sql.exec('INSERT INTO bonuses(user_id, bytes, expires_at, created_at, from_user) VALUES (?,?,?,?,?)', inviter.id, REF_BONUS, exp, Date.now(), u.id);
+    if (inviter.grace_until && this.userUsed(inviter.id) <= this.limits(this.user(inviter.id)).quota) {
+      this.sql.exec('UPDATE users SET grace_until=NULL WHERE id=?', inviter.id);
+    }
+    await this.writeManifest(inviter.id);
+    await this.send(inviter.id, `🎉 ${esc(u.first_name || 'یک دوست')} با لینک دعوت شما عضو شد!\n<b>${fmtSize(REF_BONUS)} فضای هدیه</b> تا ${fmtDate(exp, false)} به حساب شما اضافه شد.\n\n${this.accountText(this.user(inviter.id))}`, this.menuKeyboard());
+  }
+
+  inviteView(user) {
+    const link = this.refLink(user.id);
+    const invited = this.one('SELECT COUNT(*) AS c FROM users WHERE referred_by=? AND ref_rewarded=1', user.id).c;
+    const bonus = this.bonusBytes(user.id);
+    const text = [
+      '👥 <b>دعوت دوستان</b>',
+      '',
+      `هر دوستی که با لینک شما عضو شود و قوانین را بپذیرد، <b>${fmtSize(REF_BONUS)} فضای اضافه برای ${faNum(REF_DAYS)} روز</b> هدیه می‌گیرید. هدیه‌ها روی هم جمع می‌شوند.`,
+      '',
+      `🔗 لینک دعوت شما:\n<code>${esc(link)}</code>`,
+      '',
+      `👤 دعوت‌های موفق: ${faNum(invited)}`,
+      `🎁 فضای هدیه فعال: ${fmtSize(bonus)}`,
+      `(حداکثر ${faNum(REF_MAX_PER_MONTH)} هدیه در ماه)`,
+    ].join('\n');
+    const share = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent('فایل‌هات رو از تلگرام بفرست، روی تلویزیون ببین! با این لینک عضو شو و ۵۰۰ مگ هدیه بگیر 🎁')}`;
+    return { text, kb: [[{ text: '📤 ارسال لینک برای دوستان', url: share }]] };
+  }
+
+  // Expired bonuses can leave a user over quota: give them the usual 24h grace.
+  async expireBonuses() {
+    const now = Date.now();
+    for (const b of this.q('SELECT DISTINCT user_id FROM bonuses WHERE expires_at <= ? AND done=0 LIMIT 20', now)) {
+      if (this.budget() < 8) return true;
+      this.sql.exec('UPDATE bonuses SET done=1 WHERE user_id=? AND expires_at <= ?', b.user_id, now);
+      const u = this.user(b.user_id);
+      if (!u) continue;
+      await this.writeManifest(u.id);
+      const quota = this.limits(u).quota;
+      if (this.userUsed(u.id) > quota && !u.grace_until) {
+        this.sql.exec('UPDATE users SET grace_until=? WHERE id=?', now + GRACE_MS, u.id);
+        await this.send(u.id, `⏳ فضای هدیه دعوت شما تمام شد. فایل‌های بیشتر از ${fmtSize(quota)} <b>۲۴ ساعت دیگر</b> (از قدیمی‌ترین) پاک می‌شوند؛ برای جلوگیری، دوستان بیشتری دعوت کنید یا اشتراک بگیرید.`,
+          [[{ text: '👥 دعوت دوستان', callback_data: 'inv' }], [{ text: '📦 خرید اشتراک', callback_data: 'b' }]]);
+      }
+    }
+    return false;
   }
 
   tvStatus(user) {
@@ -1209,8 +1320,12 @@ export class Store extends DurableObject {
       case 'app': await this.sendApp(chatId); return answer();
       case 'help': await this.sendTutorial(chatId); return answer();
       case 'tr': await this.sendTerms(chatId, user, true); return answer();
+      case 'inv': { const v = this.inviteView(user); await this.send(chatId, v.text, v.kb); return answer(); }
       case 'ta': {
-        if (!user.terms_at) this.sql.exec('UPDATE users SET terms_at=? WHERE id=?', Date.now(), user.id);
+        if (!user.terms_at) {
+          this.sql.exec('UPDATE users SET terms_at=? WHERE id=?', Date.now(), user.id);
+          await this.rewardReferral(user);
+        }
         await this.edit(chatId, msgId, '✅ قوانین پذیرفته شد. حالا می‌توانید فایل یا لینک ویدیو بفرستید.', this.menuKeyboard());
         return answer('پذیرفته شد');
       }
@@ -1445,7 +1560,7 @@ export class Store extends DurableObject {
     form.set('parse_mode', 'HTML');
     form.set('document', new Blob([lines.join('\n')], { type: 'text/plain' }), `gift-codes-${codes.length}.txt`);
     this.sub = (this.sub || 0) + 1;
-    await fetch(`https://api.telegram.org/bot${this.env.ADMIN_BOT_TOKEN}/sendDocument`, { method: 'POST', body: form });
+    await fetch(`${this.tgBase()}/bot${this.env.ADMIN_BOT_TOKEN}/sendDocument`, { method: 'POST', body: form });
   }
 
   giftHelp() {
@@ -1697,6 +1812,7 @@ export class Store extends DurableObject {
       `مجموع پرداخت: ${faNum(paid)} تومان`,
       `عضویت: ${fmtDate(u.created_at, false)} — آخرین فعالیت: ${fmtDate(u.last_seen || u.created_at)}`,
       `قوانین: ${u.terms_at ? `پذیرفته در ${fmtDate(u.terms_at, false)}` : 'هنوز نپذیرفته'}`,
+      `دعوت‌های موفق: ${faNum(this.one('SELECT COUNT(*) AS c FROM users WHERE referred_by=? AND ref_rewarded=1', uid).c)} — فضای هدیه فعال: ${fmtSize(this.bonusBytes(uid))}${u.referred_by ? ` — دعوت‌شده توسط <code>${u.referred_by}</code>` : ''}`,
     ].join('\n');
     const kb = [
       [{ text: '➕ تمدید ۳۰ روز', callback_data: `u:${uid}:ext` }],
@@ -1832,6 +1948,7 @@ export class Store extends DurableObject {
       if (low()) return true;
     }
 
+    if (await this.expireBonuses()) return true;
     if (await this.collectViewingReports()) return true;
 
     for (const d of this.q('SELECT user_id FROM devices WHERE manifest_at IS NULL OR manifest_at < ? LIMIT 20', now - MANIFEST_REFRESH)) {
@@ -1979,6 +2096,7 @@ export class Store extends DurableObject {
       this.meta('app_file_id', null);
       return Response.json({ ok: true, url: this.publicUrl(key), size: buf.byteLength });
     }
+    if (p === '/api/admin/bonuses') return Response.json(this.q('SELECT * FROM bonuses ORDER BY id'));
     if (p === '/api/admin/support') return Response.json(this.q('SELECT * FROM support ORDER BY created_at'));
     if (p === '/api/admin/gifts') return Response.json(this.q('SELECT * FROM gift_codes ORDER BY created_at'));
     if (p === '/api/admin/settings' && req.method === 'PATCH') {
