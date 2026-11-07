@@ -963,6 +963,18 @@ export class Store extends DurableObject {
         [[{ text: '📦 خرید فضای بیشتر', callback_data: 'b' }]], m.message_id);
     }
     const id = randomId();
+    if (owner) {
+      this.sql.exec(`INSERT INTO files(id,name,mime,size,kind,status,chat_id,created_at,owner,storage,source_url)
+        VALUES (?,?,?,?,?,?,?,?,?,'arvan',?)`, id, url.hostname, 'video/mp4', 0, 'video', 'link_pending', m.chat.id, Date.now(), user.id, url.href);
+      const s = await this.send(m.chat.id, `🔗 <code>${esc(short(url.href, 60))}</code>
+با این لینک چه کنم؟`, [
+        [{ text: '📺 فقط نمایش روی تلویزیون (بدون ذخیره)', callback_data: `ls:${id}` }],
+        [{ text: '⬇️ دانلود و ذخیره در آروان', callback_data: `lp:${id}` }],
+        [{ text: '❌ لغو', callback_data: `c:${id}` }],
+      ], m.message_id);
+      if (s.ok) this.sql.exec('UPDATE files SET msg_id=? WHERE id=?', s.result.message_id, id);
+      return;
+    }
     this.sql.exec(`INSERT INTO files(id,name,mime,size,kind,status,chat_id,created_at,owner,storage,source_url)
       VALUES (?,?,?,?,?,?,?,?,?,'arvan',?)`, id, url.hostname, 'video/mp4', 0, 'video', 'link_probe', m.chat.id, Date.now(), user.id, url.href);
     const sent = await this.send(m.chat.id, `🔎 در حال بررسی لینک…\n<code>${esc(short(url.href, 60))}</code>\nکیفیت‌های موجود تا حدود یک دقیقه دیگر نمایش داده می‌شود.`,
@@ -1219,6 +1231,36 @@ export class Store extends DurableObject {
     await this.notifyAdmin(`🚨 سطل آروان عمومی شده بود (فهرست همه فایل‌ها برای همه قابل دیدن بود). ${fix?.ok ? 'خودکار دوباره خصوصی شد ✅' : 'خصوصی کردن خودکار ناموفق بود ❌ لطفاً در پنل آروان آن را «خصوصی» کنید.'}\nفایل‌ها برای پخش لازم نیست سطل عمومی باشد.`);
   }
 
+  // ---- owner only: put a link on the TV without downloading it ("stream from the site")
+  remoteName(href) {
+    try {
+      const u = new URL(href);
+      const seg = decodeURIComponent(u.pathname.split('/').filter(Boolean).pop() || '');
+      const base = seg.replace(/\.[a-z0-9]{2,4}$/i, '').replace(/[-_+]+/g, ' ').trim();
+      return cleanName(base && !/^\d+$/.test(base) ? base : u.hostname).slice(0, 80);
+    } catch { return 'link'; }
+  }
+
+  async linkChoice(cb, user, id, mode) {
+    const answer = (text) => this.tg('answerCallbackQuery', { callback_query_id: cb.id, text });
+    const f = this.one(`SELECT * FROM files WHERE id=? AND status='link_pending' AND owner=?`, id, user.id);
+    if (!f) return answer('این درخواست منقضی شده است');
+    if (mode === 'stream') {
+      const ext = (new URL(f.source_url).pathname.split('.').pop() || '').toLowerCase();
+      const kind = ['jpg', 'jpeg', 'png', 'webp', 'gif'].includes(ext) ? 'image' : ['mp3', 'm4a', 'ogg', 'flac', 'wav'].includes(ext) ? 'audio' : 'video';
+      this.sql.exec(`UPDATE files SET status='ready', storage='remote', name=?, kind=?, size=0 WHERE id=?`, this.remoteName(f.source_url), kind, id);
+      await this.writeManifest(user.id);
+      const hasTv = this.one('SELECT 1 AS x FROM devices WHERE user_id=?', user.id);
+      await this.edit(f.chat_id, f.msg_id, `📺 <b>${esc(this.remoteName(f.source_url))}</b> به تلویزیون اضافه شد.\nپخش مستقیم از خود سایت انجام می‌شود و چیزی ذخیره نشد.${hasTv ? '' : '\n(هنوز تلویزیونی وصل نیست.)'}\n\n⚠️ اگر لینک موقت باشد، ممکن است بعد از مدتی پخش نشود.`,
+        [[{ text: '🗑 حذف از تلویزیون', callback_data: `d:${id}:0` }]]);
+      return answer('به تلویزیون اضافه شد');
+    }
+    this.sql.exec(`UPDATE files SET status='link_probe' WHERE id=?`, id);
+    await this.edit(f.chat_id, f.msg_id, `🔎 در حال بررسی لینک…\nکیفیت‌های موجود تا حدود یک دقیقه دیگر نمایش داده می‌شود.`, [[{ text: '❌ لغو', callback_data: `c:${id}` }]]);
+    await this.wakeHelper();
+    return answer();
+  }
+
   tvStatus(user) {
     const d = this.one('SELECT * FROM devices WHERE user_id=?', user.id);
     if (!d) {
@@ -1245,8 +1287,8 @@ export class Store extends DurableObject {
     const u = this.user(uid);
     const lim = this.limits(u);
     const mu = this.monthUsage(u);
-    const files = this.q(`SELECT id,name,mime,size,kind,width,height,duration,created_at,obj_key,thumb_key
-      FROM files WHERE owner=? AND status='ready' AND storage='arvan' ORDER BY created_at DESC`, uid);
+    const files = this.q(`SELECT id,name,mime,size,kind,width,height,duration,created_at,obj_key,thumb_key,storage,source_url
+      FROM files WHERE owner=? AND status='ready' AND storage IN ('arvan','remote') ORDER BY created_at DESC`, uid);
     const manifest = {
       v: 1,
       updated_at: Date.now(),
@@ -1262,7 +1304,7 @@ export class Store extends DurableObject {
       files: files.map((f) => ({
         id: f.id, name: f.name, mime: f.mime, size: f.size, kind: f.kind,
         width: f.width, height: f.height, duration: f.duration, created_at: f.created_at,
-        url: this.publicUrl(f.obj_key), thumb: f.thumb_key ? this.publicUrl(f.thumb_key) : null,
+        url: f.storage === 'remote' ? f.source_url : this.publicUrl(f.obj_key), thumb: f.thumb_key ? this.publicUrl(f.thumb_key) : null,
       })),
     };
     await this.putJson(`m/${d.token}.json`, manifest);
@@ -1356,10 +1398,10 @@ export class Store extends DurableObject {
 
   listView(uid, page) {
     const total = this.one(`SELECT COUNT(*) AS c FROM files WHERE status='ready' AND owner=?`, uid).c;
-    const rows = this.q(`SELECT id,name,size,created_at,kind FROM files WHERE status='ready' AND owner=?
+    const rows = this.q(`SELECT id,name,size,created_at,CASE WHEN storage='remote' THEN 'remote' ELSE kind END AS kind FROM files WHERE status='ready' AND owner=?
       ORDER BY created_at DESC LIMIT ? OFFSET ?`, uid, PAGE, page * PAGE);
     if (!total) return { text: `📭 هنوز فایلی ندارید. هر فایلی بفرستید اینجا و روی تلویزیون نمایش داده می‌شود.\n\n${this.usageLine(uid)}`, kb: null };
-    const icon = { video: '🎬', image: '🖼', audio: '🎵', file: '📄' };
+    const icon = { video: '🎬', image: '🖼', audio: '🎵', file: '📄', remote: '🌐' };
     const lines = rows.map((f, i) =>
       `${page * PAGE + i + 1}. ${icon[f.kind] || '📄'} ${esc(short(f.name, 40))}\n     ${fmtSize(f.size)} · ${fmtDate(f.created_at)}`);
     const kb = [];
@@ -1428,6 +1470,8 @@ export class Store extends DurableObject {
         return answer('پذیرفته شد');
       }
       case 'lq': return this.chooseQuality(cb, user, a, b);
+      case 'ls': return this.isAdmin(user.id) ? this.linkChoice(cb, user, a, 'stream') : answer();
+      case 'lp': return this.isAdmin(user.id) ? this.linkChoice(cb, user, a, 'download') : answer();
       case 'sup': await this.supportStart(chatId, user); return answer();
       case 'se_end': this.setState(user.id, null); await this.send(chatId, 'گفتگو با پشتیبانی بسته شد. هر وقت سؤالی داشتید، دوباره «💬 پشتیبانی» را بزنید.', this.menuKeyboard()); return answer();
       case 'tc': this.setState(user.id, 'tv'); await this.send(chatId, '🔢 کد ۸ حرفی که روی صفحه تلویزیون است را بفرستید:'); return answer();
@@ -2005,7 +2049,7 @@ export class Store extends DurableObject {
     try { await this.bucketWatchdog(); } catch (e) { console.log('watchdog failed', String(e)); }
     try { await this.dailyBackup(); } catch (e) { console.log('backup failed', String(e)); }
     this.sql.exec('DELETE FROM seen2 WHERE at < ?', now - 3 * DAY);
-    this.sql.exec(`DELETE FROM files WHERE status IN ('link_choose','link_probe') AND created_at < ?`, now - 6 * 3600e3);
+    this.sql.exec(`DELETE FROM files WHERE status IN ('link_choose','link_probe','link_pending') AND created_at < ?`, now - 6 * 3600e3);
     this.sql.exec('DELETE FROM seen');
     this.sql.exec('DELETE FROM pairs');
     for (const p of this.q('SELECT code FROM tv_pairs WHERE created_at < ? LIMIT 10', now - PAIR_TTL)) {
