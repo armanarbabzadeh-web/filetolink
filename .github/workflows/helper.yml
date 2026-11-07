@@ -1,7 +1,7 @@
 name: Large file helper
 
-# Started by the Cloudflare Worker (repository_dispatch) when a file over 20 MB
-# arrives. Moves every queued large file from Telegram to Cloudflare, then exits.
+# Started by the Cloudflare Worker (repository_dispatch) when a user sends a video-site link.
+# Lists qualities / downloads the chosen one to ArvanCloud, then exits. No Telegram login.
 on:
   repository_dispatch:
     types: [large-file]
@@ -36,9 +36,6 @@ jobs:
       - name: Move queued files
         working-directory: helper
         env:
-          API_ID: ${{ secrets.TG_API_ID }}
-          API_HASH: ${{ secrets.TG_API_HASH }}
-          BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           HELPER_SECRET: ${{ secrets.HELPER_SECRET }}
           WORKER_URL: ${{ secrets.WORKER_URL }}
           ARVAN_ENDPOINT: https://s3.ir-central1.arvanstorage.ir

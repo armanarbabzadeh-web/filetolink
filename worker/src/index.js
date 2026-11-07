@@ -938,7 +938,7 @@ export class Store extends DurableObject {
       'اپ را باز کنید؛ یک QR و یک کد ۸ حرفی نشان می‌دهد. QR را با دوربین گوشی اسکن کنید و Start را بزنید، یا کد را از «📺 تلویزیون» همین‌جا بفرستید. هر حساب روی یک تلویزیون فعال است.',
       '',
       '<b>۳. فرستادن فایل</b>',
-      'هر ویدیو، عکس، آهنگ یا فایلی را اینجا بفرستید یا Forward کنید؛ چند ثانیه بعد روی تلویزیون است. فایل‌های بزرگ کمی بیشتر طول می‌کشند.',
+      'هر ویدیو، عکس، آهنگ یا فایلی را اینجا بفرستید یا Forward کنید؛ چند ثانیه بعد روی تلویزیون است. حداکثر حجم هر فایل ۲۰ مگابایت است؛ برای ویدیوهای بزرگ‌تر لینک سایت را بفرستید.',
       '',
       '<b>۴. دانلود از سایت‌های ویدیو 🔗</b>',
       'کافی است لینک ویدیو را بفرستید؛ کیفیت‌های موجود با حجمشان نمایش داده می‌شود، یکی را انتخاب کنید تا دانلود شود و روی تلویزیون بدون VPN ببینید.',
@@ -1015,6 +1015,9 @@ export class Store extends DurableObject {
   async addFile(m, user, media) {
     const lim = this.limits(user);
     const kb = [[{ text: '📦 ارتقای اشتراک', callback_data: 'b' }]];
+    if (media.size > TG_BOT_MAX) {
+      return this.send(m.chat.id, `⚠️ حداکثر حجم هر فایل ارسالی در تلگرام <b>۲۰ مگابایت</b> است و این فایل ${fmtSize(media.size)} است.\nبرای ویدیوهای بزرگ‌تر، لینک ویدیو را از سایتش بفرستید.`, null, m.message_id);
+    }
     if (media.size > lim.quota) {
       return this.send(m.chat.id, `❌ این فایل (${fmtSize(media.size)}) از کل فضای پلن شما (${fmtSize(lim.quota)}) بزرگ‌تر است.`, kb, m.message_id);
     }
@@ -1023,7 +1026,7 @@ export class Store extends DurableObject {
       return this.send(m.chat.id, '⚠️ به سقف <b>مصرف منصفانه</b> آپلود این ماه رسیده‌اید. از اول ماه بعد یا با ارتقای اشتراک می‌توانید دوباره فایل بفرستید.', kb, m.message_id);
     }
     const id = randomId();
-    const status = media.size > this.freeFor(user) ? 'waiting_space' : media.size > TG_BOT_MAX ? 'waiting_helper' : 'queued';
+    const status = media.size > this.freeFor(user) ? 'waiting_space' : 'queued';
     this.sql.exec(`INSERT INTO files(id,name,mime,size,kind,status,tg_file_id,thumb_file_id,width,height,duration,chat_id,created_at,owner,storage)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'arvan')`,
       id, media.name, media.mime, media.size, media.kind, status, media.fileId, media.thumbId,
@@ -1918,7 +1921,7 @@ export class Store extends DurableObject {
   // ================================================================ large-file helper (GitHub Actions)
   helperJobs() {
     const jobs = this.q(`SELECT id,name,size,mime,tg_file_id,obj_key,status,source_url,fmt FROM files
-        WHERE status IN ('waiting_helper','helper_uploading','link_probe','link_download') ORDER BY created_at`)
+        WHERE status IN ('helper_uploading','link_probe','link_download') AND source_url IS NOT NULL ORDER BY created_at`)
       .map((j) => ({
         id: j.id, name: j.name, size: j.size, mime: j.mime, tg_file_id: j.tg_file_id, obj_key: j.obj_key,
         type: j.status === 'link_probe' ? 'probe' : j.source_url ? 'link' : 'tg',

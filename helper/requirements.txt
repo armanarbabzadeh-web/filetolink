@@ -1,5 +1,3 @@
-Kurigram==2.2.26
-TgCrypto-pyrofork==1.2.8
 aiohttp==3.14.5
 boto3==1.43.124
 yt-dlp[default]
