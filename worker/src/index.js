@@ -1,6 +1,6 @@
 // TeleTVShare: Telegram bot -> ArvanCloud Object Storage -> Android TV.
 //
-// * Main bot (@TeleTVShare_bot): users send files; files are stored in the Arvan bucket and
+// * Main bot (@Teletvshare2_bot): users send files; files are stored in the Arvan bucket and
 //   shown on the user's paired TV. No links are shown in the bot.
 // * Admin bot (separate token): only the owner; receipts, users, gift codes, settings.
 // * The TV never talks to Cloudflare (workers.dev is filtered in Iran). It reads everything
