@@ -420,20 +420,31 @@ export class Store extends DurableObject {
     return j;
   }
 
+  // Every inner screen of the main bot gets a "main menu" button, except the main menu itself
+  // and messages about a transfer in progress (those already have their own cancel button).
+  withHome(keyboard, bot) {
+    if (bot !== 'main') return keyboard;
+    const datas = (keyboard || []).flat().map((k) => k.callback_data || '');
+    if (datas.includes('inv') || datas.includes('home') || datas.some((d) => d.startsWith('c:'))) return keyboard;
+    return [...(keyboard || []), [{ text: '🏠 منوی اصلی', callback_data: 'home' }]];
+  }
+
   edit(chatId, msgId, text, keyboard, bot = 'main') {
+    const kb = this.withHome(keyboard, bot);
     return this.tg('editMessageText', {
       chat_id: chatId, message_id: msgId, text, parse_mode: 'HTML',
       link_preview_options: { is_disabled: true },
-      reply_markup: keyboard ? { inline_keyboard: keyboard } : undefined,
+      reply_markup: kb ? { inline_keyboard: kb } : undefined,
     }, bot);
   }
 
   send(chatId, text, keyboard, replyTo, bot = 'main') {
+    const kb = this.withHome(keyboard, bot);
     return this.tg('sendMessage', {
       chat_id: chatId, text, parse_mode: 'HTML',
       link_preview_options: { is_disabled: true },
       reply_parameters: replyTo ? { message_id: replyTo, allow_sending_without_reply: true } : undefined,
-      reply_markup: keyboard ? { inline_keyboard: keyboard } : undefined,
+      reply_markup: kb ? { inline_keyboard: kb } : undefined,
     }, bot);
   }
 
@@ -1300,6 +1311,11 @@ export class Store extends DurableObject {
     const [op, a, b] = String(cb.data || '').split(':');
 
     switch (op) {
+      case 'home': {
+        if (user.state) this.setState(user.id, null);
+        await this.edit(chatId, msgId, this.accountText(user), this.menuKeyboard());
+        return answer();
+      }
       case 'a': await this.send(chatId, this.accountText(user), this.menuKeyboard()); return answer();
       case 'b': await this.send(chatId, this.plansText(user), this.plansKeyboard(user)); return answer();
       case 'B': {
