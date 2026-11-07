@@ -228,7 +228,7 @@ export class Store extends DurableObject {
     if (v != null) return v;
     return ({
       card_number: this.env.CARD_NUMBER, card_name: this.env.CARD_NAME, card_bank: this.env.CARD_BANK,
-      mult_up: '10',
+      mult_up: '10', links: '0',
       ...Object.fromEntries(Object.keys(PLANS).map((k) => ['fw_' + k, String(PLANS[k].fw)])),
       ...Object.fromEntries(SALE.map((k) => ['price_' + k, String(PLANS[k].price)])),
       disc_3: '10', disc_6: '15', disc_12: '25',
@@ -257,6 +257,7 @@ export class Store extends DurableObject {
   savedPct(plan, months) { return Math.max(0, Math.floor((1 - this.priceFor(plan, months) / (this.price(plan) * months)) * 100)); }
 
   isAdmin(id) { return String(id) === String(this.env.OWNER_ID); }
+  linksFor(uid) { return this.isAdmin(uid) || this.setting('links') === '1'; }
   totalUsed() { return this.one(`SELECT COALESCE(SUM(size),0) AS s FROM files WHERE status IN ${ACTIVE}`).s; }
   userUsed(uid) { return this.one(`SELECT COALESCE(SUM(size),0) AS s FROM files WHERE owner=? AND status IN ${ACTIVE}`, uid).s; }
   user(uid) { return this.one('SELECT * FROM users WHERE id=?', uid); }
@@ -485,7 +486,7 @@ export class Store extends DurableObject {
     if (user.state === 'tv' && text) { this.setState(user.id, null); return this.linkTv(m.chat.id, user, text); }
 
     const media = extractMedia(m);
-    const link = !media && (text.match(/https?:\/\/\S+/) || [])[0];
+    const link = !media && this.linksFor(user.id) && (text.match(/https?:\/\/\S+/) || [])[0];
     if (link) {
       if (user.state) this.setState(user.id, null);
       if (await this.needsTerms(m, user)) return;
@@ -949,6 +950,7 @@ export class Store extends DurableObject {
   }
 
   tutorialText() {
+    const links = this.setting('links') === '1';
     return [
       '📖 <b>آموزش TeleTVShare</b>',
       '',
@@ -959,16 +961,16 @@ export class Store extends DurableObject {
       'اپ را باز کنید؛ یک QR و یک کد ۸ حرفی نشان می‌دهد. QR را با دوربین گوشی اسکن کنید و Start را بزنید، یا کد را از «📺 تلویزیون» همین‌جا بفرستید. هر حساب روی یک تلویزیون فعال است.',
       '',
       '<b>۳. فرستادن فایل</b>',
-      'هر ویدیو، عکس، آهنگ یا فایلی را اینجا بفرستید یا Forward کنید؛ چند ثانیه بعد روی تلویزیون است. حداکثر حجم هر فایل ۲۰ مگابایت است؛ برای ویدیوهای بزرگ‌تر لینک سایت را بفرستید.',
+      `هر ویدیو، عکس، آهنگ یا فایلی را اینجا بفرستید یا Forward کنید؛ چند ثانیه بعد روی تلویزیون است. حداکثر حجم هر فایل ۲۰ مگابایت است${links ? '؛ برای ویدیوهای بزرگ‌تر لینک سایت را بفرستید' : ''}.`,
       '',
-      '<b>۴. دانلود از سایت‌های ویدیو 🔗</b>',
+      ...(links ? ['<b>۴. دانلود از سایت‌های ویدیو 🔗</b>',
       'کافی است لینک ویدیو را بفرستید؛ کیفیت‌های موجود با حجمشان نمایش داده می‌شود، یکی را انتخاب کنید تا دانلود شود و روی تلویزیون بدون VPN ببینید.',
       'سایت‌های پشتیبانی‌شده: اینستاگرام، پست‌های عمومی تلگرام، پینترست، دیلی‌موشن، توییچ، ساندکلاد، TED، بیلی‌بیلی، VK، OK.ru، Kick، Coub، Imgur، Streamable، آرشیو اینترنت و لینک مستقیم فایل‌های ویدیو و صوت.',
-      '',
-      '<b>۵. مدیریت فایل‌ها</b>',
+      ''] : []),
+      `<b>${links ? '۵' : '۴'}. مدیریت فایل‌ها</b>`,
       'از «📂 فایل‌های من» فایل‌ها را ببینید و پاک کنید. با پاک کردن، از تلویزیون هم حذف می‌شوند.',
       '',
-      '<b>۶. اشتراک</b>',
+      `<b>${links ? '۶' : '۵'}. اشتراک</b>`,
       'از «📦 خرید یا تمدید اشتراک» پلن و مدت را انتخاب کنید، مبلغ را کارت‌به‌کارت کنید و عکس رسید را بفرستید. اگر کد هدیه دارید، از «🎁 کد هدیه» وارد کنید.',
       '',
       'قوانین استفاده را از «📜 قوانین» ببینید. سؤالی بود؟ «💬 پشتیبانی» را بزنید.',
@@ -1067,7 +1069,7 @@ export class Store extends DurableObject {
     const lim = this.limits(user);
     const kb = [[{ text: '📦 ارتقای اشتراک', callback_data: 'b' }]];
     if (media.size > TG_BOT_MAX) {
-      return this.send(m.chat.id, `⚠️ حداکثر حجم هر فایل ارسالی در تلگرام <b>۲۰ مگابایت</b> است و این فایل ${fmtSize(media.size)} است.\nبرای ویدیوهای بزرگ‌تر، لینک ویدیو را از سایتش بفرستید.`, null, m.message_id);
+      return this.send(m.chat.id, `⚠️ حداکثر حجم هر فایل ارسالی در تلگرام <b>۲۰ مگابایت</b> است و این فایل ${fmtSize(media.size)} است.${this.linksFor(user.id) ? '\nبرای ویدیوهای بزرگ‌تر، لینک ویدیو را از سایتش بفرستید.' : ''}`, null, m.message_id);
     }
     if (media.size > lim.quota) {
       return this.send(m.chat.id, `❌ این فایل (${fmtSize(media.size)}) از کل فضای پلن شما (${fmtSize(lim.quota)}) بزرگ‌تر است.`, kb, m.message_id);
@@ -1482,6 +1484,7 @@ export class Store extends DurableObject {
       ...SALE.map((k) => `📦 ${PLANS[k].title}: ${faNum(this.price(k))} تومان — هزینه تخمینی آروان ${faNum(Math.round(this.estCost(k) / 100) * 100)} — سود ${faNum(Math.round((this.price(k) - this.estCost(k)) / 100) * 100)}${this.price(k) < this.floorMonthly(k) ? ' ⚠️ ضررده!' : ' ✅'}`),
       '',
       `🏷 تخفیف خرید چندماهه: ۳ ماهه ${faNum(this.discount(3))}٪ — ۶ ماهه ${faNum(this.discount(6))}٪ — یک ساله ${faNum(this.discount(12))}٪`,
+      `🔗 دانلود از لینک: ${this.setting('links') === '1' ? 'فعال برای همه' : 'فقط برای مدیر'}`,
       `⬆️ مصرف منصفانه آپلود: ${faNum(Number(this.setting('mult_up')))} برابر فضای پلن (برای شما هزینه‌ای ندارد)`,
       `📺 مصرف منصفانه تماشا (به کاربر نشان داده نمی‌شود): ${SALE.map((k) => `${PLANS[k].title.split(' ')[0]} گیگ ${faNum(this.fairWatch(k))}×`).join('، ')}`,
       '',
@@ -1494,7 +1497,7 @@ export class Store extends DurableObject {
     return [
       [{ text: '💳 شماره کارت', callback_data: 'se:card_number' }, { text: '👤 نام صاحب کارت', callback_data: 'se:card_name' }],
       [{ text: '🏦 بانک', callback_data: 'se:card_bank' }],
-      [{ text: '⬆️ منصفانه آپلود', callback_data: 'se:mult_up' }],
+      [{ text: '⬆️ منصفانه آپلود', callback_data: 'se:mult_up' }, { text: this.setting('links') === '1' ? '🔗 خاموش کردن لینک برای کاربران' : '🔗 روشن کردن لینک برای کاربران', callback_data: 'lt' }],
       SALE.map((k) => ({ text: `📺 منصفانه ${PLANS[k].title.split(' ')[0]}G`, callback_data: `se:fw_${k}` })),
       SALE.slice(0, 2).map((k) => ({ text: `قیمت ${PLANS[k].title}`, callback_data: `se:price_${k}` })),
       SALE.slice(2).map((k) => ({ text: `قیمت ${PLANS[k].title}`, callback_data: `se:price_${k}` })),
@@ -1566,6 +1569,11 @@ export class Store extends DurableObject {
       return answer();
     }
     if (op === 'as') { await A(this.settingsText(), this.settingsKeyboard()); return answer(); }
+    if (op === 'lt') {
+      this.meta('set_links', this.setting('links') === '1' ? '0' : '1');
+      await E(this.settingsText(), this.settingsKeyboard());
+      return answer(this.setting('links') === '1' ? 'دانلود از لینک برای همه فعال شد' : 'فقط برای مدیر');
+    }
     if (op === 'se') {
       this.meta('admin_state', a);
       await A(`✏️ ${this.settingPrompt(a)}\n(برای انصراف /settings را بزنید)`);
@@ -1972,7 +1980,7 @@ export class Store extends DurableObject {
       for (const [k, v] of Object.entries(b)) this.meta('set_' + k, v == null ? null : String(v));
     }
     if (p === '/api/admin/settings') return Response.json(Object.fromEntries(
-      ['card_number', 'card_name', 'card_bank', 'mult_up', ...SALE.map((k) => 'fw_' + k), 'disc_3', 'disc_6', 'disc_12', ...SALE.map((k) => 'price_' + k)].map((k) => [k, this.setting(k)])));
+      ['card_number', 'card_name', 'card_bank', 'mult_up', 'links', ...SALE.map((k) => 'fw_' + k), 'disc_3', 'disc_6', 'disc_12', ...SALE.map((k) => 'price_' + k)].map((k) => [k, this.setting(k)])));
     return Response.json({ error: 'not found' }, { status: 404 });
   }
 
