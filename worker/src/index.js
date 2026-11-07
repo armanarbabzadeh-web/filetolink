@@ -193,7 +193,7 @@ export class Store extends DurableObject {
       CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
       CREATE TABLE IF NOT EXISTS support(admin_msg_id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, created_at INTEGER);
     `);
-    this.addCols('files', { owner: 'INTEGER', storage: "TEXT NOT NULL DEFAULT 'do'", obj_key: 'TEXT', thumb_key: 'TEXT', source_url: 'TEXT', formats: 'TEXT', fmt: 'TEXT' });
+    this.addCols('files', { owner: 'INTEGER', storage: "TEXT NOT NULL DEFAULT 'do'", obj_key: 'TEXT', thumb_key: 'TEXT', source_url: 'TEXT', formats: 'TEXT', fmt: 'TEXT', src_msg_id: 'INTEGER' });
     this.addCols('users', {
       up_month: 'TEXT', up_used: 'INTEGER NOT NULL DEFAULT 0',
       watch_month: 'TEXT', watch_used: 'INTEGER NOT NULL DEFAULT 0', watch_warned: 'INTEGER NOT NULL DEFAULT 0',
@@ -1089,6 +1089,7 @@ export class Store extends DurableObject {
     this.sql.exec('UPDATE files SET obj_key=? WHERE id=?', this.fileKey({ id, name: media.name }), id);
     const sent = await this.send(m.chat.id, `⏳ <b>${esc(media.name)}</b> (${fmtSize(media.size)})`, null, m.message_id);
     if (sent.ok) this.sql.exec('UPDATE files SET msg_id=? WHERE id=?', sent.result.message_id, id);
+    this.sql.exec('UPDATE files SET src_msg_id=? WHERE id=?', m.message_id, id);
     await this.afterStatus(id);
   }
 
@@ -1752,6 +1753,9 @@ export class Store extends DurableObject {
     const mk = monthKey();
     this.sql.exec(`UPDATE users SET up_used=CASE WHEN up_month=? THEN up_used ELSE 0 END + ?, up_month=? WHERE id=?`, mk, size, mk, f.owner);
     await this.writeManifest(f.owner);
+    // The file is safe on Arvan now: remove the user's original message from the chat (bots may delete
+    // incoming messages in private chats for 48 hours).
+    if (f.src_msg_id) await this.tg('deleteMessage', { chat_id: f.chat_id, message_id: f.src_msg_id });
     const hasTv = this.one('SELECT 1 AS x FROM devices WHERE user_id=?', f.owner);
     await this.edit(f.chat_id, f.msg_id,
       `✅ <b>${esc(f.name)}</b> (${fmtSize(size)}) ذخیره شد${hasTv ? ' و روی تلویزیون نمایش داده می‌شود.' : '.\n📺 برای دیدن روی تلویزیون، تلویزیون را وصل کنید.'}\n\n${this.usageLine(f.owner)}`,
