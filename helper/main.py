@@ -1,8 +1,9 @@
-"""TeleTVShare link helper (runs on GitHub Actions).
+"""TeleTVShare helper (runs on GitHub Actions).
 
-Handles downloads from video-site links only: lists the available qualities (yt-dlp), then
-downloads the one the user picked and uploads it to the ArvanCloud bucket.
-It does not log in to Telegram and uses no Telegram api_id/api_hash.
+1. Telegram files over 20 MB (the Bot API can't download them): logs in as the main bot over MTProto
+   with the public app id the Worker hands out (GET /helper/tg) and streams the file to Arvan.
+2. Video-site links (owner only): lists the qualities (yt-dlp), downloads the chosen one.
+The owner's Cloudflare files are sent to the Worker in parts instead of Arvan.
 
 Env: WORKER_URL, HELPER_SECRET, ARVAN_ENDPOINT, ARVAN_REGION, ARVAN_BUCKET,
      ARVAN_ACCESS_KEY, ARVAN_SECRET_KEY, YT_COOKIES_FILE (optional)
@@ -36,6 +37,95 @@ s3 = boto3.client(
     config=Config(s3={"addressing_style": "path"}, signature_version="s3v4", retries={"max_attempts": 5}),
 )
 http: ClientSession | None = None
+
+PART = 16 * 1024 * 1024  # S3 multipart part size
+tg = None
+
+
+async def telegram():
+    """Log in as the main bot over MTProto (needed for files over 20 MB). Details come from the Worker."""
+    global tg
+    if tg is None:
+        from pyrogram import Client
+        logging.getLogger("pyrogram").setLevel(logging.WARNING)
+        cfg = await call("GET", "/helper/tg")
+        tg = Client("helper", api_id=int(cfg["api_id"]), api_hash=cfg["api_hash"], bot_token=cfg["bot_token"],
+                    in_memory=True, no_updates=True)
+        await tg.start()
+        log.info("logged in to Telegram")
+    return tg
+
+
+async def process(job):
+    """A Telegram file over 20 MB: stream it from Telegram to Arvan (S3 multipart) or to the owner's Cloudflare storage."""
+    jid, key, size = job["id"], job["obj_key"], job["size"]
+    cf = job.get("storage") == "cf"
+    log.info("job %s (%d bytes)", jid, size)  # no file names: run logs of a public repo are public
+    loop = asyncio.get_running_loop()
+    client = await telegram()
+    part_size = int(job.get("chunk") or 1_900_000) * 45 if cf else PART
+    upload_id, parts, offset = None, [], 0
+    if not cf:
+        mp = await loop.run_in_executor(None, lambda: s3.create_multipart_upload(
+            Bucket=BUCKET, Key=key, ACL="public-read",
+            ContentType=job.get("mime") or "application/octet-stream",
+            ContentDisposition=job.get("disposition") or "inline",
+        ))
+        upload_id = mp["UploadId"]
+    buf, done, last_report, started = bytearray(), 0, 0.0, time.time()
+
+    async def flush(data):
+        nonlocal offset
+        if cf:
+            await call("PUT", f"/helper/upload/{jid}?offset={offset}", data=data)
+            offset += len(data)
+            return
+        n = len(parts) + 1
+        res = await loop.run_in_executor(None, lambda: s3.upload_part(
+            Bucket=BUCKET, Key=key, UploadId=upload_id, PartNumber=n, Body=data))
+        parts.append({"PartNumber": n, "ETag": res["ETag"]})
+
+    completed = False
+    try:
+        async for piece in client.stream_media(job["tg_file_id"]):
+            buf += piece
+            done += len(piece)
+            if len(buf) >= part_size:
+                await flush(bytes(buf[:part_size]))
+                del buf[:part_size]
+            if time.time() - last_report > 10:
+                last_report = time.time()
+                speed = done / max(1.0, time.time() - started)
+                try:
+                    await call("POST", f"/helper/progress/{jid}", json={"done": done, "total": size, "speed": int(speed)}, tries=1)
+                except PermissionError:
+                    raise RuntimeError("cancelled by user")
+                except Exception:
+                    pass
+        if buf or (not parts and not offset):
+            await flush(bytes(buf))
+        if not cf:
+            await loop.run_in_executor(None, lambda: s3.complete_multipart_upload(
+                Bucket=BUCKET, Key=key, UploadId=upload_id, MultipartUpload={"Parts": parts}))
+        completed = True
+        for attempt in range(1, 6):  # Arvan can take a moment before the new object is visible
+            try:
+                await call("POST", f"/helper/finish/{jid}", json={})
+                break
+            except PermissionError as e:
+                if "409" not in str(e) or attempt == 5:
+                    raise
+                await asyncio.sleep(5 * attempt)
+        log.info("job %s done in %.0fs", jid, time.time() - started)
+    except Exception as e:
+        log.warning("job %s failed: %s", jid, type(e).__name__)
+        if upload_id and not completed:
+            try:
+                await loop.run_in_executor(None, lambda: s3.abort_multipart_upload(Bucket=BUCKET, Key=key, UploadId=upload_id))
+            except Exception:
+                log.warning("abort failed (ignored)")
+        await fail(jid, e)
+
 
 
 async def call(method, path, *, data=None, json=None, tries=4):
@@ -152,7 +242,7 @@ async def run_once():
     try:
         while True:
             data = await call("GET", "/helper/jobs")
-            jobs = [j for j in data.get("jobs", []) if (j["id"], j["type"]) not in done and j["type"] in ("probe", "link")]
+            jobs = [j for j in data.get("jobs", []) if (j["id"], j["type"]) not in done]
             if not jobs:
                 # a user may still be choosing a quality: stay a few minutes instead of starting a new run
                 if data.get("waiting") and (idle_since is None or time.time() - idle_since < 300):
@@ -163,8 +253,18 @@ async def run_once():
             idle_since = None
             for job in jobs:
                 done.add((job["id"], job["type"]))
-                await (probe_link(job) if job["type"] == "probe" else download_link(job))
+                if job["type"] == "probe":
+                    await probe_link(job)
+                elif job["type"] == "link":
+                    await download_link(job)
+                else:
+                    await process(job)
     finally:
+        if tg is not None:
+            try:
+                await tg.stop()
+            except Exception:
+                pass
         await http.close()
     log.info("queue empty, %d job(s) handled", len(done))
 

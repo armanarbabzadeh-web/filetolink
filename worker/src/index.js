@@ -13,6 +13,7 @@ import { AwsClient } from 'aws4fetch';
 const CHUNK = 1_900_000;              // in-DO storage chunk (owner's Cloudflare storage)
 const CF_CAP = 4_600_000_000;         // free plan: 5 GB of Durable Object storage per account
 const TG_BOT_MAX = 20 * 1024 * 1024;  // Bot API getFile limit; bigger files go to the helper
+const TG_MAX = 2000 * 1024 * 1024;    // Telegram's file limit for bots (MTProto)
 const PAGE = 8;
 const DAY = 864e5;
 const GRACE_MS = DAY;                 // files over quota are kept 24h after a plan ends
@@ -486,6 +487,7 @@ export class Store extends DurableObject {
       if (p.startsWith('/api/')) return this.api(req, url, p);
       if (p.startsWith('/helper/')) {
         if (p === '/helper/jobs') return this.helperJobs();
+        if (p === '/helper/tg') return Response.json({ api_id: Number(this.env.TG_API_ID) || null, api_hash: this.env.TG_API_HASH || null, bot_token: this.env.BOT_TOKEN });
         if ((m = /^\/helper\/(finish|fail)\/([A-Za-z0-9]{16})$/.exec(p))) return this.helperDone(req, m[1], m[2]);
         if ((m = /^\/helper\/progress\/([A-Za-z0-9]{16})$/.exec(p))) return this.helperProgress(req, m[1]);
         if ((m = /^\/helper\/formats\/([A-Za-z0-9]{16})$/.exec(p))) return this.helperFormats(req, m[1]);
@@ -1047,7 +1049,7 @@ export class Store extends DurableObject {
       'اپ را باز کنید؛ یک QR و یک کد ۸ حرفی نشان می‌دهد. QR را با دوربین گوشی اسکن کنید و Start را بزنید، یا کد را از «📺 تلویزیون» همین‌جا بفرستید. هر حساب روی یک تلویزیون فعال است.',
       '',
       '<b>۳. فرستادن فایل</b>',
-      `هر ویدیو، عکس، آهنگ یا فایلی را اینجا بفرستید یا Forward کنید؛ چند ثانیه بعد روی تلویزیون است. حداکثر حجم هر فایل ۲۰ مگابایت است${links ? '؛ برای ویدیوهای بزرگ‌تر لینک سایت را بفرستید' : ''}.`,
+      `هر ویدیو، عکس، آهنگ یا فایلی را اینجا بفرستید یا Forward کنید؛ چند ثانیه بعد روی تلویزیون است. فایل‌های بزرگ (تا ۲ گیگابایت) کمی بیشتر طول می‌کشند.`,
       '',
       ...(links ? ['<b>۴. دانلود از سایت‌های ویدیو 🔗</b>',
       'کافی است لینک ویدیو را بفرستید؛ کیفیت‌های موجود با حجمشان نمایش داده می‌شود، یکی را انتخاب کنید تا دانلود شود و روی تلویزیون بدون VPN ببینید.',
@@ -1084,7 +1086,7 @@ export class Store extends DurableObject {
       '۵. در صورت تخلف، فایل‌ها بدون اطلاع قبلی حذف و حساب مسدود می‌شود و مبلغ اشتراک بازگردانده نمی‌شود.',
       '۶. هر حساب فقط روی یک تلویزیون فعال است و واگذاری یا فروش حساب به دیگران مجاز نیست.',
       '۷. پس از پایان اشتراک، فایل‌های بیشتر از فضای رایگان ۲۴ ساعت بعد پاک می‌شوند.',
-      '۸. حداکثر حجم هر فایل ارسالی در تلگرام ۲۰ مگابایت است و مصرف منصفانه برای همه پلن‌ها برقرار است.',
+      '۸. حداکثر حجم هر فایل ارسالی در تلگرام ۲ گیگابایت است و مصرف منصفانه برای همه پلن‌ها برقرار است.',
       '۹. TeleTVShare می‌تواند این قوانین را به‌روز کند؛ ادامه استفاده یعنی پذیرش قوانین جدید.',
     ].join('\n');
   }
@@ -1259,7 +1261,7 @@ export class Store extends DurableObject {
       await this.wakeHelper();
       return answer();
     }
-    const st = !cf && f.size > this.freeFor(user) ? 'waiting_space' : 'queued';
+    const st = !cf && f.size > this.freeFor(user) ? 'waiting_space' : f.size > TG_BOT_MAX ? 'waiting_helper' : 'queued';
     this.sql.exec(`UPDATE files SET status=?, storage=?, obj_key=? WHERE id=?`, st, cf ? 'cf' : 'arvan', cf ? null : this.fileKey(f), id);
     await this.afterStatus(id);
     return answer(cf ? 'Cloudflare' : 'آروان');
@@ -1277,7 +1279,7 @@ export class Store extends DurableObject {
 
   // Helper uploads a downloaded file in parts: PUT /helper/upload/<id>?offset=N (N a multiple of CHUNK).
   async helperUpload(req, url, id) {
-    const f = this.one(`SELECT * FROM files WHERE id=? AND storage='cf' AND status IN ('link_download','helper_uploading')`, id);
+    const f = this.one(`SELECT * FROM files WHERE id=? AND storage='cf' AND status IN ('link_download','helper_uploading','waiting_helper')`, id);
     if (!f) return new Response('no such job', { status: 404 });
     const offset = Number(url.searchParams.get('offset') || 0);
     if (!Number.isInteger(offset) || offset < 0 || offset % CHUNK) return new Response('bad offset', { status: 400 });
@@ -1419,8 +1421,8 @@ export class Store extends DurableObject {
   async addFile(m, user, media) {
     const lim = this.limits(user);
     const kb = [[{ text: '📦 ارتقای اشتراک', callback_data: 'b' }]];
-    if (media.size > TG_BOT_MAX) {
-      return this.send(m.chat.id, `⚠️ حداکثر حجم هر فایل ارسالی در تلگرام <b>۲۰ مگابایت</b> است و این فایل ${fmtSize(media.size)} است.${this.linksFor(user.id) ? '\nبرای ویدیوهای بزرگ‌تر، لینک ویدیو را از سایتش بفرستید.' : ''}`, null, m.message_id);
+    if (media.size > TG_MAX) {
+      return this.send(m.chat.id, `⚠️ حداکثر حجم هر فایل <b>۲ گیگابایت</b> است و این فایل ${fmtSize(media.size)} است.`, null, m.message_id);
     }
     if (media.size > lim.quota) {
       return this.send(m.chat.id, `❌ این فایل (${fmtSize(media.size)}) از کل فضای پلن شما (${fmtSize(lim.quota)}) بزرگ‌تر است.`, kb, m.message_id);
@@ -1431,7 +1433,7 @@ export class Store extends DurableObject {
     }
     const id = randomId();
     const owner = this.isAdmin(user.id);
-    const status = owner ? 'store_pending' : media.size > this.freeFor(user) ? 'waiting_space' : 'queued';
+    const status = owner ? 'store_pending' : media.size > this.freeFor(user) ? 'waiting_space' : media.size > TG_BOT_MAX ? 'waiting_helper' : 'queued';
     this.sql.exec(`INSERT INTO files(id,name,mime,size,kind,status,tg_file_id,thumb_file_id,width,height,duration,chat_id,created_at,owner,storage)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'arvan')`,
       id, media.name, media.mime, media.size, media.kind, status, media.fileId, media.thumbId,
@@ -2326,7 +2328,7 @@ export class Store extends DurableObject {
   // ================================================================ large-file helper (GitHub Actions)
   helperJobs() {
     const jobs = this.q(`SELECT id,name,size,mime,tg_file_id,obj_key,status,source_url,fmt,storage FROM files
-        WHERE status IN ('helper_uploading','link_probe','link_download') AND source_url IS NOT NULL ORDER BY created_at`)
+        WHERE status IN ('waiting_helper','helper_uploading','link_probe','link_download') ORDER BY created_at`)
       .map((j) => ({
         id: j.id, name: j.name, size: j.size, mime: j.mime, tg_file_id: j.tg_file_id, obj_key: j.obj_key, storage: j.storage, chunk: CHUNK,
         type: j.status === 'link_probe' ? 'probe' : j.source_url ? 'link' : 'tg',
