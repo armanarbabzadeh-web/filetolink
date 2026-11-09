@@ -1,18 +1,27 @@
-"""TeleTVShare helper (runs on GitHub Actions).
+"""TeleTVShare helper: runs always-on on the VPS (`python main.py --service`, HELPER_NAME=vps) and,
+as a fallback, on GitHub Actions (`python main.py`, one pass over the queue).
 
 1. Telegram files over 20 MB (the Bot API can't download them): logs in as the main bot over MTProto
    with the public app id the Worker hands out (GET /helper/tg) and streams the file to Arvan.
 2. Video-site links (owner only): lists the qualities (yt-dlp), downloads the chosen one.
 The owner's Cloudflare files are sent to the Worker in parts instead of Arvan.
 
+Every job is claimed first (a lease the Worker hands out); progress keeps it alive, so the VPS and
+GitHub never work on the same file, and a job left by a stopped helper is picked up again.
+
 Env: WORKER_URL, HELPER_SECRET, ARVAN_ENDPOINT, ARVAN_REGION, ARVAN_BUCKET,
-     ARVAN_ACCESS_KEY, ARVAN_SECRET_KEY, YT_COOKIES_FILE (optional)
+     ARVAN_ACCESS_KEY, ARVAN_SECRET_KEY, YT_COOKIES_FILE (optional),
+     HELPER_NAME (vps|gh, default gh), SESSION_DIR (VPS: keep the Telegram login between jobs)
 Logs never contain URLs, titles or file names (the repository and its run logs are public).
 """
 
 import asyncio
+import hashlib
 import logging
 import os
+import shutil
+import sys
+import tempfile
 import time
 
 import boto3
@@ -25,7 +34,11 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger("helper")
 
 WORKER_URL = os.environ["WORKER_URL"].rstrip("/")
-AUTH = {"Authorization": f"Bearer {os.environ['HELPER_SECRET']}", "User-Agent": "TeleTVShareHelper/3.0"}
+HELPER_NAME = os.environ.get("HELPER_NAME", "gh")
+AUTH = {"Authorization": f"Bearer {os.environ['HELPER_SECRET']}", "User-Agent": "TeleTVShareHelper/4.0", "X-Helper": HELPER_NAME}
+SESSION_DIR = os.environ.get("SESSION_DIR")  # set on the VPS: one Telegram login that stays, not a new login per run
+POLL = 5            # seconds between queue checks in service mode
+DISK_RESERVE = 2 * 1024**3
 BUCKET = os.environ["ARVAN_BUCKET"]
 
 s3 = boto3.client(
@@ -49,9 +62,17 @@ async def telegram():
         from pyrogram import Client
         logging.getLogger("pyrogram").setLevel(logging.WARNING)
         cfg = await call("GET", "/helper/tg")
-        tg = Client("helper", api_id=int(cfg["api_id"]), api_hash=cfg["api_hash"], bot_token=cfg["bot_token"],
-                    in_memory=True, no_updates=True)
-        await tg.start()
+        if SESSION_DIR:
+            # one session file per bot token: a new token starts a fresh login automatically
+            name = "bot_" + hashlib.sha256(cfg["bot_token"].encode()).hexdigest()[:12]
+            os.makedirs(SESSION_DIR, exist_ok=True)
+            client = Client(name, api_id=int(cfg["api_id"]), api_hash=cfg["api_hash"], bot_token=cfg["bot_token"],
+                            workdir=SESSION_DIR, no_updates=True)
+        else:
+            client = Client("helper", api_id=int(cfg["api_id"]), api_hash=cfg["api_hash"], bot_token=cfg["bot_token"],
+                            in_memory=True, no_updates=True)
+        await client.start()
+        tg = client
         log.info("logged in to Telegram")
     return tg
 
@@ -119,6 +140,8 @@ async def process(job):
         log.info("job %s done in %.0fs", jid, time.time() - started)
     except Exception as e:
         log.warning("job %s failed: %s", jid, type(e).__name__)
+        if any(k in type(e).__name__ for k in ("Auth", "Unauthorized", "Revoked", "Connection")):
+            await reset_telegram()
         if upload_id and not completed:
             try:
                 await loop.run_in_executor(None, lambda: s3.abort_multipart_upload(Bucket=BUCKET, Key=key, UploadId=upload_id))
@@ -126,6 +149,16 @@ async def process(job):
                 log.warning("abort failed (ignored)")
         await fail(jid, e)
 
+
+
+async def reset_telegram():
+    global tg
+    if tg is not None:
+        try:
+            await tg.stop()
+        except Exception:
+            pass
+    tg = None
 
 
 async def call(method, path, *, data=None, json=None, tries=4):
@@ -199,6 +232,10 @@ async def download_link(job):
             call("POST", f"/helper/progress/{jid}", json={"done": int(done), "total": int(total or job["size"] or 0), "speed": int(speed)}, tries=1), loop)
 
     try:
+        need = int((job.get("size") or 0) * 1.3) + DISK_RESERVE
+        free = shutil.disk_usage(tempfile.gettempdir()).free
+        if free < need:
+            raise RuntimeError(f"not enough disk on helper ({free // 2**20} MB free)")
         path, info = await loop.run_in_executor(None, links.download, job["url"], job["fmt"], progress)
         size = os.path.getsize(path)
         cf = job.get("storage") == "cf"
@@ -234,6 +271,59 @@ async def download_link(job):
         await fail(jid, e)
 
 
+async def handle(job):
+    """Claim a job, then do it while keeping the claim alive."""
+    jid = job["id"]
+    try:
+        await call("POST", f"/helper/claim/{jid}", tries=2)
+    except PermissionError:
+        return  # another helper has it, or it was cancelled
+    except Exception:
+        log.warning("claim %s failed", jid)
+        return
+
+    async def keepalive():
+        while True:
+            await asyncio.sleep(60)
+            try:
+                await call("POST", f"/helper/claim/{jid}", tries=1)
+            except Exception:
+                pass
+
+    ka = asyncio.create_task(keepalive())
+    try:
+        if job["type"] == "probe":
+            await probe_link(job)
+        elif job["type"] == "link":
+            await download_link(job)
+        else:
+            await process(job)
+    finally:
+        ka.cancel()
+
+
+async def serve():
+    """VPS: stay running, check the queue every few seconds (this is also the VPS heartbeat)."""
+    global http
+    http = ClientSession(timeout=ClientTimeout(total=None, sock_connect=30, sock_read=300))
+    log.info("service started as %s", HELPER_NAME)
+    try:
+        while True:
+            try:
+                data = await call("GET", "/helper/jobs", tries=2)
+                jobs = data.get("jobs", []) if isinstance(data, dict) else []
+                for job in jobs:
+                    await handle(job)
+                if not jobs:
+                    await asyncio.sleep(POLL)
+            except Exception as e:
+                log.warning("queue check failed: %s", type(e).__name__)
+                await asyncio.sleep(15)
+    finally:
+        await reset_telegram()
+        await http.close()
+
+
 async def run_once():
     global http
     http = ClientSession(timeout=ClientTimeout(total=None, sock_connect=30, sock_read=300))
@@ -253,21 +343,12 @@ async def run_once():
             idle_since = None
             for job in jobs:
                 done.add((job["id"], job["type"]))
-                if job["type"] == "probe":
-                    await probe_link(job)
-                elif job["type"] == "link":
-                    await download_link(job)
-                else:
-                    await process(job)
+                await handle(job)
     finally:
-        if tg is not None:
-            try:
-                await tg.stop()
-            except Exception:
-                pass
+        await reset_telegram()
         await http.close()
     log.info("queue empty, %d job(s) handled", len(done))
 
 
 if __name__ == "__main__":
-    asyncio.run(run_once())
+    asyncio.run(serve() if "--service" in sys.argv else run_once())

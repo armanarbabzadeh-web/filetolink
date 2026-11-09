@@ -14,6 +14,11 @@ const CHUNK = 1_900_000;              // in-DO storage chunk (owner's Cloudflare
 const CF_CAP = 4_600_000_000;         // free plan: 5 GB of Durable Object storage per account
 const TG_BOT_MAX = 20 * 1024 * 1024;  // Bot API getFile limit; bigger files go to the helper
 const TG_MAX = 2000 * 1024 * 1024;    // Telegram's file limit for bots (MTProto)
+const VPS_ALIVE = 60_000;             // the VPS counts as online if it asked for jobs this recently
+const VPS_DOWN_ALERT = 3 * 60_000;    // tell the owner when the VPS has been silent this long
+const LEASE = 3 * 60_000;             // a helper must show progress this often or the job is handed on
+const HANDOFF = 90_000;               // unclaimed jobs go to GitHub after this long
+const HELPER_ST = `('waiting_helper','helper_uploading','link_probe','link_download')`;
 const PAGE = 8;
 const DAY = 864e5;
 const GRACE_MS = DAY;                 // files over quota are kept 24h after a plan ends
@@ -202,7 +207,7 @@ export class Store extends DurableObject {
       CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
       CREATE TABLE IF NOT EXISTS support(admin_msg_id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, created_at INTEGER);
     `);
-    this.addCols('files', { owner: 'INTEGER', storage: "TEXT NOT NULL DEFAULT 'do'", obj_key: 'TEXT', thumb_key: 'TEXT', source_url: 'TEXT', formats: 'TEXT', fmt: 'TEXT', src_msg_id: 'INTEGER' });
+    this.addCols('files', { owner: 'INTEGER', storage: "TEXT NOT NULL DEFAULT 'do'", obj_key: 'TEXT', thumb_key: 'TEXT', source_url: 'TEXT', formats: 'TEXT', fmt: 'TEXT', src_msg_id: 'INTEGER', lease_by: 'TEXT', lease_until: 'INTEGER' });
     this.addCols('users', {
       up_month: 'TEXT', up_used: 'INTEGER NOT NULL DEFAULT 0',
       watch_month: 'TEXT', watch_used: 'INTEGER NOT NULL DEFAULT 0', watch_warned: 'INTEGER NOT NULL DEFAULT 0',
@@ -486,7 +491,8 @@ export class Store extends DurableObject {
       if ((m = /^\/t\/([A-Za-z0-9]{16})$/.exec(p))) return this.serveThumb(m[1]);
       if (p.startsWith('/api/')) return this.api(req, url, p);
       if (p.startsWith('/helper/')) {
-        if (p === '/helper/jobs') return this.helperJobs();
+        if (p === '/helper/jobs') return this.helperJobs(req);
+        if ((m = /^\/helper\/claim\/([A-Za-z0-9]{16})$/.exec(p)) && req.method === 'POST') return this.helperClaim(req, m[1]);
         if (p === '/helper/tg') return Response.json({ api_id: Number(this.env.TG_API_ID) || null, api_hash: this.env.TG_API_HASH || null, bot_token: this.env.BOT_TOKEN });
         if ((m = /^\/helper\/(finish|fail)\/([A-Za-z0-9]{16})$/.exec(p))) return this.helperDone(req, m[1], m[2]);
         if ((m = /^\/helper\/progress\/([A-Za-z0-9]{16})$/.exec(p))) return this.helperProgress(req, m[1]);
@@ -989,6 +995,8 @@ export class Store extends DurableObject {
   async helperFormats(req, id) {
     const f = this.one(`SELECT * FROM files WHERE id=? AND status='link_probe'`, id);
     if (!f) return new Response('no such job', { status: 404 });
+    if (!this.holdLease(req, id)) return new Response('taken by another helper', { status: 409 });
+    this.sql.exec('UPDATE files SET lease_by=NULL, lease_until=NULL WHERE id=?', id);
     const info = await req.json();
     const formats = (info.formats || []).slice(0, 8);
     if (!formats.length) {
@@ -1281,6 +1289,7 @@ export class Store extends DurableObject {
   async helperUpload(req, url, id) {
     const f = this.one(`SELECT * FROM files WHERE id=? AND storage='cf' AND status IN ('link_download','helper_uploading','waiting_helper')`, id);
     if (!f) return new Response('no such job', { status: 404 });
+    if (!this.holdLease(req, id)) return new Response('taken by another helper', { status: 409 });
     const offset = Number(url.searchParams.get('offset') || 0);
     if (!Number.isInteger(offset) || offset < 0 || offset % CHUNK) return new Response('bad offset', { status: 400 });
     const len = Number(req.headers.get('content-length') || 0);
@@ -1309,8 +1318,9 @@ export class Store extends DurableObject {
   }
 
   async helperThumb(req, id) {
-    const f = this.one(`SELECT id FROM files WHERE id=? AND storage='cf' AND status IN ('link_download','helper_uploading')`, id);
+    const f = this.one(`SELECT id FROM files WHERE id=? AND storage='cf' AND status IN ('link_download','helper_uploading','waiting_helper')`, id);
     if (!f) return new Response('no such job', { status: 404 });
+    if (!this.holdLease(req, id)) return new Response('taken by another helper', { status: 409 });
     const buf = await req.arrayBuffer();
     if (!buf.byteLength || buf.byteLength > 1_000_000) return new Response('bad thumb', { status: 400 });
     this.sql.exec('UPDATE files SET thumb=? WHERE id=?', buf, id);
@@ -1364,6 +1374,68 @@ export class Store extends DurableObject {
       },
     }, { highWaterMark: 0 });
     return new Response(stream, { status, headers });
+  }
+
+  // ---- helpers: the always-on VPS ("vps") does the heavy jobs; GitHub Actions ("gh") is the fallback.
+  // A helper claims a job before working on it (lease); progress keeps the lease alive. A job whose
+  // lease runs out (helper died) can be claimed again by any helper.
+  // Timings; T_<NAME> vars exist only in local tests (.dev.vars), production uses the constants.
+  tm(name) { return Number(this.env['T_' + name]) || { VPS_ALIVE, VPS_DOWN_ALERT, LEASE, HANDOFF }[name]; }
+  helperName(req) { return (req.headers.get('x-helper') || 'gh').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 10) || 'gh'; }
+  vpsAlive() { return Date.now() - Number(this.meta('vps_seen') || 0) < this.tm('VPS_ALIVE'); }
+
+  async vpsSeen() {
+    this.meta('vps_seen', Date.now());
+    if (this.meta('vps_down')) {
+      this.meta('vps_down', null);
+      await this.notifyAdmin('✅ VPS دوباره وصل شد و کارهای سنگین را خودش انجام می‌دهد.');
+    }
+  }
+
+  // The caller holds (or may take) this job's lease. Extends it.
+  holdLease(req, id) {
+    const who = this.helperName(req);
+    const f = this.one('SELECT lease_by, lease_until FROM files WHERE id=?', id);
+    if (!f) return false;
+    if (f.lease_by && f.lease_by !== who && Number(f.lease_until) > Date.now()) return false;
+    this.sql.exec('UPDATE files SET lease_by=?, lease_until=? WHERE id=?', who, Date.now() + this.tm('LEASE'), id);
+    return true;
+  }
+
+  helperClaim(req, id) {
+    const f = this.one(`SELECT id FROM files WHERE id=? AND status IN ${HELPER_ST}`, id);
+    if (!f) return new Response('no such job', { status: 404 });
+    if (!this.holdLease(req, id)) return new Response('taken by another helper', { status: 409 });
+    return Response.json({ ok: true, lease_ms: this.tm('LEASE') });
+  }
+
+  async soonAlarm(ms) {
+    const a = await this.ctx.storage.getAlarm();
+    if (!a || a > Date.now() + ms) await this.ctx.storage.setAlarm(Date.now() + ms);
+  }
+
+  // Runs from the alarm: hands unclaimed jobs to GitHub when the VPS doesn't take them, and tells the
+  // owner when the VPS stops or starts checking in.
+  async helperWatch() {
+    const now = Date.now();
+    const seen = Number(this.meta('vps_seen') || 0);
+    if (seen && now - seen > this.tm('VPS_DOWN_ALERT') && !this.meta('vps_down')) {
+      this.meta('vps_down', 1);
+      await this.notifyAdmin('⚠️ VPS بیش از ۳ دقیقه است جواب نمی‌دهد. فایل‌های بزرگ خودکار با GitHub منتقل می‌شوند تا VPS برگردد.');
+    }
+    const open = this.one(`SELECT COUNT(*) AS c FROM files WHERE status IN ${HELPER_ST} AND (lease_until IS NULL OR lease_until < ?)`, now).c;
+    if (!open) { this.meta('open_since', null); return; }
+    const since = Number(this.meta('open_since') || 0) || now;
+    this.meta('open_since', since);
+    if (now - since >= this.tm('HANDOFF') && now - Number(this.meta('gh_woke') || 0) > 4 * 60_000) await this.wakeHelper(true);
+  }
+
+  helperStatus() {
+    return {
+      vps_seen: Number(this.meta('vps_seen') || 0) || null, vps_alive: this.vpsAlive(), vps_down: !!this.meta('vps_down'),
+      gh_woke: Number(this.meta('gh_woke') || 0) || null, open_since: Number(this.meta('open_since') || 0) || null,
+      jobs: this.q(`SELECT id,status,lease_by,lease_until FROM files WHERE status IN ${HELPER_ST}`),
+    };
   }
 
   tvStatus(user) {
@@ -1455,8 +1527,11 @@ export class Store extends DurableObject {
       await this.edit(f.chat_id, f.msg_id, `⏳ ${title}\nدر حال ذخیره…`);
       await this.ctx.storage.setAlarm(Date.now() + 50);
     } else if (f.status === 'waiting_helper') {
+      const vps = this.vpsAlive();
       const woke = await this.wakeHelper();
-      await this.edit(f.chat_id, f.msg_id, woke
+      await this.edit(f.chat_id, f.msg_id, vps
+        ? `⏳ ${title}\nفایل بزرگ است؛ انتقال آن تا چند ثانیه دیگر شروع می‌شود.`
+        : woke
         ? `⏳ ${title}\nفایل بزرگ است؛ انتقال آن تا حدود یک دقیقه دیگر شروع می‌شود.`
         : `🕓 ${title}\nفایل در صف انتقال است و به‌زودی ذخیره می‌شود.`,
         [[{ text: '❌ لغو', callback_data: `c:${id}` }]]);
@@ -1465,7 +1540,10 @@ export class Store extends DurableObject {
     }
   }
 
-  async wakeHelper() {
+  async wakeHelper(force = false) {
+    await this.soonAlarm(60_000);
+    if (!force && this.vpsAlive()) return true;
+    this.meta('gh_woke', Date.now());
     if (!this.env.GITHUB_TOKEN || !this.env.GITHUB_REPO) return false;
     const r = await fetch(`https://api.github.com/repos/${this.env.GITHUB_REPO}/dispatches`, {
       method: 'POST',
@@ -2032,6 +2110,7 @@ export class Store extends DurableObject {
       `💰 درآمد ۳۰ روز اخیر: ${faNum(income)} تومان`,
       `💸 هزینه تقریبی آروان این ماه: ${faNum(Math.round(storeCost + trafficCost))} تومان`,
       `🧾 رسیدهای در انتظار: ${faNum(pending)}`,
+      this.meta('vps_seen') ? `🖥 VPS: ${this.vpsAlive() ? '🟢 آنلاین' : '🔴 قطع — کارها با GitHub انجام می‌شود'}` : '🖥 VPS: هنوز وصل نشده',
     ].join('\n');
   }
 
@@ -2092,8 +2171,11 @@ export class Store extends DurableObject {
       console.log('maintenance failed', e.stack || e);
     }
     if (this.budget() > 8) await this.processQueue();
+    try { if (this.budget() > 4) await this.helperWatch(); } catch (e) { console.log('helper watch failed', e.stack || e); }
     const queued = this.one(`SELECT 1 AS x FROM files WHERE status='queued' LIMIT 1`);
-    await this.ctx.storage.setAlarm(Date.now() + (queued ? 50 : 10 * 60_000));
+    const helperWait = this.one(`SELECT 1 AS x FROM files WHERE status IN ${HELPER_ST} LIMIT 1`);
+    const vpsWatch = this.meta('vps_seen') && !this.meta('vps_down');
+    await this.ctx.storage.setAlarm(Date.now() + (queued ? 50 : helperWait || vpsWatch ? 60_000 : 10 * 60_000));
   }
 
   // Files up to 20 MB: Telegram -> Arvan, streamed.
@@ -2309,6 +2391,7 @@ export class Store extends DurableObject {
         ...u, used: this.userUsed(u.id), tv: !!this.one('SELECT 1 AS x FROM devices WHERE user_id=?', u.id),
       })));
     }
+    if (p === '/api/admin/helper') return Response.json(this.helperStatus());
     if (p === '/api/admin/files') {
       const owner = url.searchParams.get('owner');
       const cols = 'id,name,size,status,kind,owner,created_at,storage';
@@ -2326,9 +2409,12 @@ export class Store extends DurableObject {
   }
 
   // ================================================================ large-file helper (GitHub Actions)
-  helperJobs() {
+  async helperJobs(req) {
+    const who = this.helperName(req);
+    if (who === 'vps') await this.vpsSeen();
     const jobs = this.q(`SELECT id,name,size,mime,tg_file_id,obj_key,status,source_url,fmt,storage FROM files
-        WHERE status IN ('waiting_helper','helper_uploading','link_probe','link_download') ORDER BY created_at`)
+        WHERE status IN ('waiting_helper','helper_uploading','link_probe','link_download')
+          AND (lease_until IS NULL OR lease_until < ? OR lease_by = ?) ORDER BY created_at`, Date.now(), who)
       .map((j) => ({
         id: j.id, name: j.name, size: j.size, mime: j.mime, tg_file_id: j.tg_file_id, obj_key: j.obj_key, storage: j.storage, chunk: CHUNK,
         type: j.status === 'link_probe' ? 'probe' : j.source_url ? 'link' : 'tg',
@@ -2341,6 +2427,7 @@ export class Store extends DurableObject {
   async helperProgress(req, id) {
     const f = this.one(`SELECT * FROM files WHERE id=? AND status IN ('waiting_helper','helper_uploading','link_download')`, id);
     if (!f) return new Response('no such job', { status: 404 });
+    if (!this.holdLease(req, id)) return new Response('taken by another helper', { status: 409 });
     this.sql.exec(`UPDATE files SET status='helper_uploading' WHERE id=?`, id);
     const { done = 0, total = f.size, speed = 0 } = await req.json().catch(() => ({}));
     const pct = pctOf(done, total);
@@ -2353,6 +2440,8 @@ export class Store extends DurableObject {
   async helperDone(req, kind, id) {
     const f = this.one(`SELECT * FROM files WHERE id=? AND status IN ('waiting_helper','helper_uploading','link_probe','link_download')`, id);
     if (!f) return new Response('no such job', { status: 404 });
+    if (!this.holdLease(req, id)) return new Response('taken by another helper', { status: 409 });
+    this.sql.exec('UPDATE files SET lease_by=NULL, lease_until=NULL WHERE id=?', id);
     if (kind === 'fail') {
       const why = (await req.text()).slice(0, 500) || 'helper error';
       this.sql.exec(`UPDATE files SET status='failed', error=? WHERE id=?`, why, id);
