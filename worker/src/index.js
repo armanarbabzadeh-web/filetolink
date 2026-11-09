@@ -1545,6 +1545,14 @@ export class Store extends DurableObject {
     }
     const id = randomId();
     const owner = this.isAdmin(user.id);
+    // Users save one file at a time (the owner has no limit). Checked right before the insert, with no
+    // await in between, so two files arriving together can't both slip through.
+    const busy = !owner && this.one(`SELECT id,name FROM files WHERE owner=? AND status IN
+      ('queued','uploading','waiting_helper','helper_uploading','waiting_space') ORDER BY created_at LIMIT 1`, user.id);
+    if (busy) {
+      return this.send(m.chat.id, `⏳ فایل قبلی شما (<b>${esc(short(busy.name, 40))}</b>) هنوز در حال ذخیره است.\nهر بار یک فایل ذخیره می‌شود؛ وقتی تمام شد، این فایل را دوباره بفرستید.`,
+        [[{ text: '❌ لغو فایل قبلی', callback_data: `c:${busy.id}` }]], m.message_id);
+    }
     const status = owner ? 'store_pending' : media.size > this.freeFor(user) ? 'waiting_space' : media.size > TG_BOT_MAX ? 'waiting_helper' : 'queued';
     this.sql.exec(`INSERT INTO files(id,name,mime,size,kind,status,tg_file_id,thumb_file_id,width,height,duration,chat_id,created_at,owner,storage)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'arvan')`,

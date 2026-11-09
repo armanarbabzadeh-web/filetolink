@@ -53,9 +53,10 @@ s3 = boto3.client(
 http: ClientSession | None = None
 
 PART = 16 * 1024 * 1024  # S3 multipart part size
-PARALLEL = 6             # parts in flight per file to Arvan (Finland -> Iran: ~4 MB/s per stream, ~15 MB/s with 8)
-MAX_JOBS = int(os.environ.get("MAX_JOBS", "3"))  # files handled at the same time in service mode
-POOL = ThreadPoolExecutor(12)  # upload threads shared by all files
+PARALLEL = 16            # 16 MB parts in flight to Arvan at once, shared by ALL files (keeps memory bounded)
+MAX_JOBS = int(os.environ.get("MAX_JOBS", "25"))  # files at the same time in service mode (the owner may send many)
+POOL = ThreadPoolExecutor(PARALLEL)  # upload threads shared by all files
+PART_SLOTS = asyncio.Semaphore(PARALLEL)
 tg = None
 TG_LOCK = asyncio.Lock()
 
@@ -97,7 +98,8 @@ async def process(job):
     log.info("job %s (%d bytes)", jid, size)  # no file names: run logs of a public repo are public
     loop = asyncio.get_running_loop()
     client = await telegram()
-    part_size = int(job.get("chunk") or 1_900_000) * 45 if cf else PART
+    # Cloudflare parts: 10 chunks (19 MB) so many files at once still fit in memory
+    part_size = int(job.get("chunk") or 1_900_000) * 10 if cf else PART
     upload_id, parts, offset = None, [], 0
     if not cf:
         mp = await loop.run_in_executor(None, lambda: s3.create_multipart_upload(
@@ -109,7 +111,7 @@ async def process(job):
     buf, done, last_report, started = bytearray(), 0, 0.0, time.time()
     pending = set()      # Arvan parts being uploaded right now
     next_part = 0
-    sem = asyncio.Semaphore(PARALLEL)
+    sem = PART_SLOTS
 
     async def put_part(n, data):
         try:
