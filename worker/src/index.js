@@ -11,6 +11,7 @@ import { DurableObject } from 'cloudflare:workers';
 import { AwsClient } from 'aws4fetch';
 
 const CHUNK = 1_900_000;              // in-DO storage chunk (owner's Cloudflare storage)
+const VPS_CAP = 5 * 1024 ** 3;          // owner's storage on the VPS disk
 const CF_CAP = 4_600_000_000;         // free plan: 5 GB of Durable Object storage per account
 const TG_BOT_MAX = 20 * 1024 * 1024;  // Bot API getFile limit; bigger files go to the helper
 const TG_MAX = 2000 * 1024 * 1024;    // Telegram's file limit for bots (MTProto)
@@ -141,7 +142,7 @@ function extractMedia(m) {
     const name = cleanName(o.file_name || fallbackName);
     const mime = o.mime_type || fallbackMime || guessMime(name);
     return {
-      fileId: o.file_id, name, mime, size: o.file_size || 0,
+      fileId: o.file_id, uniqueId: o.file_unique_id || null, name, mime, size: o.file_size || 0,
       kind: kind || kindOf(mime, name),
       thumbId: (o.thumbnail || o.thumb)?.file_id || null,
       width: o.width || null, height: o.height || null, duration: o.duration || null,
@@ -183,6 +184,7 @@ export class Store extends DurableObject {
       CREATE TABLE IF NOT EXISTS chunks(file_id TEXT NOT NULL, idx INTEGER NOT NULL,
         data BLOB NOT NULL, PRIMARY KEY(file_id, idx));
       CREATE TABLE IF NOT EXISTS seen(update_id TEXT PRIMARY KEY, at INTEGER);
+      CREATE TABLE IF NOT EXISTS vps_del(id TEXT PRIMARY KEY, at INTEGER);
       CREATE TABLE IF NOT EXISTS users(
         id INTEGER PRIMARY KEY, first_name TEXT, username TEXT,
         plan TEXT NOT NULL DEFAULT 'free', expires_at INTEGER, grace_until INTEGER,
@@ -208,7 +210,7 @@ export class Store extends DurableObject {
       CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
       CREATE TABLE IF NOT EXISTS support(admin_msg_id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, created_at INTEGER);
     `);
-    this.addCols('files', { owner: 'INTEGER', storage: "TEXT NOT NULL DEFAULT 'do'", obj_key: 'TEXT', thumb_key: 'TEXT', source_url: 'TEXT', formats: 'TEXT', fmt: 'TEXT', src_msg_id: 'INTEGER', lease_by: 'TEXT', lease_until: 'INTEGER' });
+    this.addCols('files', { owner: 'INTEGER', storage: "TEXT NOT NULL DEFAULT 'do'", obj_key: 'TEXT', thumb_key: 'TEXT', source_url: 'TEXT', formats: 'TEXT', fmt: 'TEXT', src_msg_id: 'INTEGER', lease_by: 'TEXT', lease_until: 'INTEGER', uniq: 'TEXT' });
     this.addCols('users', {
       up_month: 'TEXT', up_used: 'INTEGER NOT NULL DEFAULT 0',
       watch_month: 'TEXT', watch_used: 'INTEGER NOT NULL DEFAULT 0', watch_warned: 'INTEGER NOT NULL DEFAULT 0',
@@ -275,7 +277,7 @@ export class Store extends DurableObject {
   isAdmin(id) { return String(id) === String(this.env.OWNER_ID); }
   linksFor(uid) { return this.isAdmin(uid) || this.setting('links') === '1'; }
   totalUsed() { return this.one(`SELECT COALESCE(SUM(size),0) AS s FROM files WHERE status IN ${ACTIVE}`).s; }
-  userUsed(uid) { return this.one(`SELECT COALESCE(SUM(size),0) AS s FROM files WHERE owner=? AND status IN ${ACTIVE} AND storage<>'cf'`, uid).s; }
+  userUsed(uid) { return this.one(`SELECT COALESCE(SUM(size),0) AS s FROM files WHERE owner=? AND status IN ${ACTIVE} AND storage NOT IN ('cf','vps')`, uid).s; }
   user(uid) { return this.one('SELECT * FROM users WHERE id=?', uid); }
 
   // Effective limits. Monthly upload and viewing caps are `mult` x storage quota.
@@ -409,7 +411,8 @@ export class Store extends DurableObject {
   }
 
   async deleteFile(id) {
-    const f = this.one('SELECT owner, obj_key, thumb_key FROM files WHERE id=?', id);
+    const f = this.one('SELECT owner, obj_key, thumb_key, storage FROM files WHERE id=?', id);
+    if (f?.storage === 'vps') this.sql.exec('INSERT OR IGNORE INTO vps_del(id, at) VALUES (?,?)', id, Date.now());
     this.sql.exec('DELETE FROM chunks WHERE file_id=?', id);
     this.sql.exec('DELETE FROM files WHERE id=?', id);
     if (f) {
@@ -495,6 +498,11 @@ export class Store extends DurableObject {
       if (p.startsWith('/helper/')) {
         if (p === '/helper/jobs') return this.helperJobs(req);
         if ((m = /^\/helper\/claim\/([A-Za-z0-9]{16})$/.exec(p)) && req.method === 'POST') return this.helperClaim(req, m[1]);
+        if (p === '/helper/vpsdel' && req.method === 'POST') {
+          const { ids = [] } = await req.json().catch(() => ({}));
+          for (const x of ids.slice(0, 200)) this.sql.exec('DELETE FROM vps_del WHERE id=?', String(x));
+          return Response.json({ ok: true });
+        }
         if (p === '/helper/tg') return Response.json({ api_id: Number(this.env.TG_API_ID) || null, api_hash: this.env.TG_API_HASH || null, bot_token: this.env.BOT_TOKEN });
         if ((m = /^\/helper\/(finish|fail)\/([A-Za-z0-9]{16})$/.exec(p))) return this.helperDone(req, m[1], m[2]);
         if ((m = /^\/helper\/progress\/([A-Za-z0-9]{16})$/.exec(p))) return this.helperProgress(req, m[1]);
@@ -978,10 +986,13 @@ export class Store extends DurableObject {
         [[{ text: '📦 خرید فضای بیشتر', callback_data: 'b' }]], m.message_id);
     }
     const id = randomId();
+    const uniq = this.normUrl(url.href);
+    const old = this.findSaved(user.id, uniq);
     if (owner) {
-      this.sql.exec(`INSERT INTO files(id,name,mime,size,kind,status,chat_id,created_at,owner,storage,source_url)
-        VALUES (?,?,?,?,?,?,?,?,?,'arvan',?)`, id, url.hostname, 'video/mp4', 0, 'video', 'store_pending', m.chat.id, Date.now(), user.id, url.href);
-      const s = await this.send(m.chat.id, `🔗 <code>${esc(short(url.href, 60))}</code>\nکجا ذخیره شود؟\n<i>☁️ Cloudflare آزاد: ${fmtSize(this.cfFree())} — 🇮🇷 آروان آزاد: ${fmtSize(this.freeFor(user))}</i>`,
+      this.sql.exec(`INSERT INTO files(id,name,mime,size,kind,status,chat_id,created_at,owner,storage,source_url,uniq)
+        VALUES (?,?,?,?,?,?,?,?,?,'arvan',?,?)`, id, url.hostname, 'video/mp4', 0, 'video', old ? 'dup_pending' : 'store_pending', m.chat.id, Date.now(), user.id, url.href, uniq);
+      if (old) return this.warnDuplicate(m.chat.id, m.message_id, id, old);
+      const s = await this.send(m.chat.id, `🔗 <code>${esc(short(url.href, 60))}</code>\nکجا ذخیره شود؟\n${this.freeLine(user)}`,
         this.storeKb(id), m.message_id);
       if (s.ok) this.sql.exec('UPDATE files SET msg_id=? WHERE id=?', s.result.message_id, id);
       return;
@@ -1016,7 +1027,7 @@ export class Store extends DurableObject {
 
   async showQualities(f) {
     const user = this.user(f.owner);
-    const free = f.storage === 'cf' ? this.cfFree() : this.freeFor(user);
+    const free = f.storage === 'cf' ? this.cfFree() : f.storage === 'vps' ? this.vpsFree() : this.freeFor(user);
     const { formats } = JSON.parse(f.formats || '{"formats":[]}');
     const kb = formats.map((q, i) => {
       const fits = !q.size || q.size <= free;
@@ -1036,6 +1047,8 @@ export class Store extends DurableObject {
     const size = q.size || 0;
     if (f.storage === 'cf') {
       if (size > this.cfFree()) return answer(`فضای Cloudflare کافی نیست (${fmtSize(size)} لازم است، آزاد: ${fmtSize(this.cfFree())}).`, true);
+    } else if (f.storage === 'vps') {
+      if (size > this.vpsFree()) return answer(`فضای VPS کافی نیست (${fmtSize(size)} لازم است، آزاد: ${fmtSize(this.vpsFree())}).`, true);
     } else {
       if (size > this.freeFor(user)) return answer(`فضای کافی ندارید (${fmtSize(size)} لازم است). فایل‌های قدیمی را پاک کنید یا اشتراک بگیرید.`, true);
       if (this.monthUsage(user).up + size > this.limits(user).upCap) return answer('به سقف مصرف منصفانه آپلود این ماه رسیده‌اید.', true);
@@ -1255,10 +1268,11 @@ export class Store extends DurableObject {
         try { ids = ((await (await this.s3get(key))?.json())?.ids || []).filter((x) => /^[A-Za-z0-9]{16}$/.test(x)); } catch { ids = []; }
       }
       const files = d && ids.length
-        ? this.q(`SELECT id,name,obj_key,thumb_key FROM files WHERE owner=? AND id IN (${ids.slice(0, 50).map(() => '?').join(',')})`, d.user_id, ...ids.slice(0, 50))
+        ? this.q(`SELECT id,name,obj_key,thumb_key,storage FROM files WHERE owner=? AND id IN (${ids.slice(0, 50).map(() => '?').join(',')})`, d.user_id, ...ids.slice(0, 50))
         : [];
       const now = files.slice(0, 8);   // 2 Arvan requests per file; the rest next minute
       for (const f of now) {
+        if (f.storage === 'vps') this.sql.exec('INSERT OR IGNORE INTO vps_del(id, at) VALUES (?,?)', f.id, Date.now());
         this.sql.exec('DELETE FROM chunks WHERE file_id=?', f.id);
         this.sql.exec('DELETE FROM files WHERE id=?', f.id);
         await this.s3del(f.obj_key);
@@ -1274,6 +1288,26 @@ export class Store extends DurableObject {
         if (u) await this.send(d.user_id, `🗑 از روی تلویزیون پاک شد:\n${names}\n\n${this.usageLine(d.user_id)}`);
       }
     }
+  }
+
+  // ---- owner only: third storage on the VPS disk (5 GB). The VPS has no open port: it reaches the
+  // internet through a Cloudflare quick tunnel (outbound only) and tells us the tunnel name when it
+  // checks in. The TV asks this Worker; we redirect it to the tunnel with a link that expires.
+  vpsUsed() { return this.one(`SELECT COALESCE(SUM(size),0) AS s FROM files WHERE storage='vps' AND status IN ${ACTIVE}`).s; }
+  vpsFree() { return Math.max(0, VPS_CAP - this.vpsUsed()); }
+
+  async vpsSig(id, exp) {
+    const key = await crypto.subtle.importKey('raw', enc.encode(this.env.HELPER_SECRET), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    const mac = new Uint8Array(await crypto.subtle.sign('HMAC', key, enc.encode(`${id}:${exp}`)));
+    return [...mac].map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 32);
+  }
+
+  async serveVps(f) {
+    const host = this.meta('vps_tunnel');
+    if (!host || !this.vpsAlive()) return new Response('VPS is offline', { status: 503, headers: { 'retry-after': '60' } });
+    const exp = Math.floor(Date.now() / 1000) + 6 * 3600;
+    const sig = await this.vpsSig(f.id, exp);
+    return Response.redirect(`https://${host}/v/${f.id}/${encodeURIComponent(cleanName(f.name))}?exp=${exp}&sig=${sig}`, 302);
   }
 
   async bucketWatchdog() {
@@ -1292,7 +1326,7 @@ export class Store extends DurableObject {
   cfUrl(f) { return `${this.env.PUBLIC_URL}/f/${f.id}/${encodeURIComponent(cleanName(f.name))}`; }
   storeKb(id) {
     return [
-      [{ text: '☁️ Cloudflare', callback_data: `sc:${id}:cf` }, { text: '🇮🇷 آروان', callback_data: `sc:${id}:ar` }],
+      [{ text: '☁️ Cloudflare', callback_data: `sc:${id}:cf` }, { text: '🖥 VPS', callback_data: `sc:${id}:vps` }, { text: '🇮🇷 آروان', callback_data: `sc:${id}:ar` }],
       [{ text: '❌ لغو', callback_data: `c:${id}` }],
     ];
   }
@@ -1302,17 +1336,23 @@ export class Store extends DurableObject {
     const f = this.one(`SELECT * FROM files WHERE id=? AND status='store_pending' AND owner=?`, id, user.id);
     if (!f) return answer('این درخواست منقضی شده است');
     const cf = target === 'cf';
+    const vps = target === 'vps';
+    const storage = cf ? 'cf' : vps ? 'vps' : 'arvan';
+    const label = cf ? '☁️ Cloudflare' : vps ? '🖥 VPS' : '🇮🇷 آروان';
     if (cf && f.size > this.cfFree()) return answer(`فضای Cloudflare کافی نیست (آزاد: ${fmtSize(this.cfFree())}).`, true);
+    if (vps && f.size > this.vpsFree()) return answer(`فضای VPS کافی نیست (آزاد: ${fmtSize(this.vpsFree())}).`, true);
+    if (vps && !this.vpsAlive()) return answer('VPS الان در دسترس نیست. Cloudflare یا آروان را انتخاب کنید.', true);
     if (f.source_url) {
-      this.sql.exec(`UPDATE files SET status='link_probe', storage=? WHERE id=?`, cf ? 'cf' : 'arvan', id);
-      await this.edit(f.chat_id, f.msg_id, `🔎 در حال بررسی لینک… (${cf ? '☁️ Cloudflare' : '🇮🇷 آروان'})\nکیفیت‌های موجود تا حدود یک دقیقه دیگر نمایش داده می‌شود.`, [[{ text: '❌ لغو', callback_data: `c:${id}` }]]);
+      this.sql.exec(`UPDATE files SET status='link_probe', storage=? WHERE id=?`, storage, id);
+      await this.edit(f.chat_id, f.msg_id, `🔎 در حال بررسی لینک… (${label})\nکیفیت‌های موجود تا حدود یک دقیقه دیگر نمایش داده می‌شود.`, [[{ text: '❌ لغو', callback_data: `c:${id}` }]]);
       await this.wakeHelper();
       return answer();
     }
-    const st = !cf && f.size > this.freeFor(user) ? 'waiting_space' : f.size > TG_BOT_MAX ? 'waiting_helper' : 'queued';
-    this.sql.exec(`UPDATE files SET status=?, storage=?, obj_key=? WHERE id=?`, st, cf ? 'cf' : 'arvan', cf ? null : this.fileKey(f), id);
+    // VPS files always go through the VPS helper (it writes them to its own disk)
+    const st = vps ? 'waiting_helper' : !cf && f.size > this.freeFor(user) ? 'waiting_space' : f.size > TG_BOT_MAX ? 'waiting_helper' : 'queued';
+    this.sql.exec(`UPDATE files SET status=?, storage=?, obj_key=? WHERE id=?`, st, storage, storage === 'arvan' ? this.fileKey(f) : null, id);
     await this.afterStatus(id);
-    return answer(cf ? 'Cloudflare' : 'آروان');
+    return answer(label);
   }
 
   // Write a whole buffer into chunks (Telegram files, max 20 MB).
@@ -1358,7 +1398,7 @@ export class Store extends DurableObject {
   }
 
   async helperThumb(req, id) {
-    const f = this.one(`SELECT id FROM files WHERE id=? AND storage='cf' AND status IN ('link_download','helper_uploading','waiting_helper')`, id);
+    const f = this.one(`SELECT id FROM files WHERE id=? AND storage IN ('cf','vps') AND status IN ('link_download','helper_uploading','waiting_helper')`, id);
     if (!f) return new Response('no such job', { status: 404 });
     if (!this.holdLease(req, id)) return new Response('taken by another helper', { status: 409 });
     const buf = await req.arrayBuffer();
@@ -1376,10 +1416,11 @@ export class Store extends DurableObject {
   }
 
   // Files kept in this Durable Object (Cloudflare storage, and the old single-user ones), with Range support.
-  serveFile(req, id) {
+  async serveFile(req, id) {
     const f = this.one(`SELECT id,name,mime,size,status,storage,obj_key FROM files WHERE id=?`, id);
     if (!f || f.status !== 'ready') return new Response('File not found', { status: 404 });
     if (f.storage === 'arvan') return Response.redirect(this.publicUrl(f.obj_key), 302);
+    if (f.storage === 'vps') return this.serveVps(f);
     if (f.storage !== 'cf' && f.storage !== 'do') return new Response('Not available', { status: 404 });
     const size = f.size;
     let start = 0, end = size - 1, status = 200;
@@ -1463,7 +1504,7 @@ export class Store extends DurableObject {
       this.meta('vps_down', 1);
       await this.notifyAdmin('⚠️ VPS بیش از ۳ دقیقه است جواب نمی‌دهد. فایل‌های بزرگ خودکار با GitHub منتقل می‌شوند تا VPS برگردد.');
     }
-    const open = this.one(`SELECT COUNT(*) AS c FROM files WHERE status IN ${HELPER_ST} AND (lease_until IS NULL OR lease_until < ?)`, now).c;
+    const open = this.one(`SELECT COUNT(*) AS c FROM files WHERE status IN ${HELPER_ST} AND storage <> 'vps' AND (lease_until IS NULL OR lease_until < ?)`, now).c;
     if (!open) { this.meta('open_since', null); return; }
     const since = Number(this.meta('open_since') || 0) || now;
     this.meta('open_since', since);
@@ -1506,7 +1547,7 @@ export class Store extends DurableObject {
     const lim = this.limits(u);
     const mu = this.monthUsage(u);
     const files = this.q(`SELECT id,name,mime,size,kind,width,height,duration,created_at,obj_key,thumb_key,storage,source_url,thumb IS NOT NULL AS has_thumb
-      FROM files WHERE owner=? AND status='ready' AND storage IN ('arvan','remote','cf') ORDER BY created_at DESC`, uid);
+      FROM files WHERE owner=? AND status='ready' AND storage IN ('arvan','remote','cf','vps') ORDER BY created_at DESC`, uid);
     const manifest = {
       v: 1,
       updated_at: Date.now(),
@@ -1523,8 +1564,8 @@ export class Store extends DurableObject {
       files: files.map((f) => ({
         id: f.id, name: f.name, mime: f.mime, size: f.size, kind: f.kind,
         width: f.width, height: f.height, duration: f.duration, created_at: f.created_at,
-        url: f.storage === 'remote' ? f.source_url : f.storage === 'cf' ? this.cfUrl(f) : this.publicUrl(f.obj_key),
-        thumb: f.storage === 'cf' ? (f.has_thumb ? `${this.env.PUBLIC_URL}/t/${f.id}` : null) : f.thumb_key ? this.publicUrl(f.thumb_key) : null,
+        url: f.storage === 'remote' ? f.source_url : f.storage === 'cf' || f.storage === 'vps' ? this.cfUrl(f) : this.publicUrl(f.obj_key),
+        thumb: f.storage === 'cf' || f.storage === 'vps' ? (f.has_thumb ? `${this.env.PUBLIC_URL}/t/${f.id}` : null) : f.thumb_key ? this.publicUrl(f.thumb_key) : null,
       })),
     };
     await this.putJson(`m/${d.token}.json`, manifest);
@@ -1550,14 +1591,20 @@ export class Store extends DurableObject {
     // Users' files are saved one at a time: while one is being saved, the next ones wait their turn.
     // (Decided right before the insert, with no await in between, so files arriving together queue up.)
     const waiting = !owner && (this.userBusy(user.id) || this.one(`SELECT 1 AS x FROM files WHERE owner=? AND status='turn_wait' LIMIT 1`, user.id));
-    const status = owner ? 'store_pending' : waiting ? 'turn_wait' : this.saveStatus(user, media.size);
+    const uniq = media.uniqueId ? `tg:${media.uniqueId}` : null;
+    const old = this.findSaved(user.id, uniq);
+    const status = old ? 'dup_pending' : owner ? 'store_pending' : waiting ? 'turn_wait' : this.saveStatus(user, media.size);
     this.sql.exec(`INSERT INTO files(id,name,mime,size,kind,status,tg_file_id,thumb_file_id,width,height,duration,chat_id,created_at,owner,storage)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'arvan')`,
       id, media.name, media.mime, media.size, media.kind, status, media.fileId, media.thumbId,
       media.width, media.height, media.duration, m.chat.id, Date.now(), user.id);
-    this.sql.exec('UPDATE files SET obj_key=? WHERE id=?', this.fileKey({ id, name: media.name }), id);
+    this.sql.exec('UPDATE files SET obj_key=?, uniq=? WHERE id=?', this.fileKey({ id, name: media.name }), uniq, id);
+    if (old) {
+      this.sql.exec('UPDATE files SET src_msg_id=? WHERE id=?', m.message_id, id);
+      return this.warnDuplicate(m.chat.id, m.message_id, id, old);
+    }
     const sent = owner
-      ? await this.send(m.chat.id, `📥 <b>${esc(media.name)}</b> (${fmtSize(media.size)})\nکجا ذخیره شود؟\n<i>☁️ Cloudflare آزاد: ${fmtSize(this.cfFree())} — 🇮🇷 آروان آزاد: ${fmtSize(this.freeFor(user))}</i>`, this.storeKb(id), m.message_id)
+      ? await this.send(m.chat.id, `📥 <b>${esc(media.name)}</b> (${fmtSize(media.size)})\nکجا ذخیره شود؟\n${this.freeLine(user)}`, this.storeKb(id), m.message_id)
       : await this.send(m.chat.id, `⏳ <b>${esc(media.name)}</b> (${fmtSize(media.size)})`, null, m.message_id);
     if (sent.ok) this.sql.exec('UPDATE files SET msg_id=? WHERE id=?', sent.result.message_id, id);
     this.sql.exec('UPDATE files SET src_msg_id=? WHERE id=?', m.message_id, id);
@@ -1580,6 +1627,60 @@ export class Store extends DurableObject {
     if (!next) return;
     this.sql.exec('UPDATE files SET status=? WHERE id=?', this.saveStatus(this.user(uid), next.size), next.id);
     await this.afterStatus(next.id);
+  }
+
+  // ---- repeats: every file keeps a fingerprint (Telegram's unique file id, or the normalized link).
+  // Sending the same file/link again warns that it's already there; "save again" is still possible.
+  normUrl(href) {
+    try {
+      const u = new URL(href);
+      u.hash = '';
+      for (const k of [...u.searchParams.keys()]) if (/^(utm_|fbclid|gclid|si$|feature$)/i.test(k)) u.searchParams.delete(k);
+      return `url:${u.hostname.toLowerCase().replace(/^www\./, '')}${u.pathname.replace(/\/+$/, '')}${u.search}`;
+    } catch { return null; }
+  }
+
+  findSaved(uid, uniq) {
+    if (!uniq) return null;
+    const live = `status NOT IN ('failed','dup_pending')`;
+    const f = this.one(`SELECT * FROM files WHERE owner=? AND uniq=? AND ${live} ORDER BY created_at LIMIT 1`, uid, uniq);
+    if (f || !uniq.startsWith('url:')) return f;
+    // links saved before fingerprints existed
+    return this.q(`SELECT * FROM files WHERE owner=? AND uniq IS NULL AND source_url IS NOT NULL AND ${live}`, uid)
+      .find((x) => this.normUrl(x.source_url) === uniq) || null;
+  }
+
+  storageLabel(s) { return s === 'cf' ? '☁️ Cloudflare' : s === 'vps' ? '🖥 VPS' : '🇮🇷 آروان'; }
+
+  async warnDuplicate(chat, replyTo, id, old) {
+    const where = old.status === 'ready'
+      ? `ذخیره شده در ${this.storageLabel(old.storage)} — ${fmtDate(old.created_at)}`
+      : 'همین الان در حال ذخیره است';
+    const link = old.source_url ? `\n🔗 <code>${esc(short(old.source_url, 70))}</code>` : '';
+    const s = await this.send(chat, `⚠️ این ${old.source_url ? 'لینک' : 'فایل'} قبلاً ذخیره شده و موجود است:\n<b>${esc(short(old.name, 60))}</b> (${fmtSize(old.size)})\n${where}${link}`,
+      [[{ text: '💾 دوباره ذخیره کن', callback_data: `dy:${id}` }, { text: '❌ نه، لازم نیست', callback_data: `c:${id}` }]], replyTo);
+    if (s.ok) this.sql.exec('UPDATE files SET msg_id=? WHERE id=?', s.result.message_id, id);
+  }
+
+  // "Save again": continue exactly as if it had been new.
+  async dupProceed(cb, user, id) {
+    const answer = (text) => this.tg('answerCallbackQuery', { callback_query_id: cb.id, text });
+    const f = this.one(`SELECT * FROM files WHERE id=? AND status='dup_pending' AND owner=?`, id, user.id);
+    if (!f) return answer('این درخواست منقضی شده است');
+    const owner = this.isAdmin(user.id);
+    if (owner || f.source_url) {
+      this.sql.exec(`UPDATE files SET status='store_pending', created_at=? WHERE id=?`, Date.now(), id);
+      await this.edit(f.chat_id, f.msg_id, `${f.source_url ? `🔗 <code>${esc(short(f.source_url, 60))}</code>` : `📥 <b>${esc(f.name)}</b> (${fmtSize(f.size)})`}\nکجا ذخیره شود؟\n${this.freeLine(user)}`, this.storeKb(id));
+      return answer();
+    }
+    const waiting = this.userBusy(user.id) || this.one(`SELECT 1 AS x FROM files WHERE owner=? AND status='turn_wait' LIMIT 1`, user.id);
+    this.sql.exec('UPDATE files SET status=?, created_at=? WHERE id=?', waiting ? 'turn_wait' : this.saveStatus(user, f.size), Date.now(), id);
+    await this.afterStatus(id);
+    return answer();
+  }
+
+  freeLine(user) {
+    return `<i>☁️ Cloudflare آزاد: ${fmtSize(this.cfFree())} — 🖥 VPS آزاد: ${fmtSize(this.vpsFree())} — 🇮🇷 آروان آزاد: ${fmtSize(this.freeFor(user))}</i>`;
   }
 
   async afterStatus(id) {
@@ -1657,7 +1758,7 @@ export class Store extends DurableObject {
     if (!total) return { text: `📭 هنوز فایلی ندارید. هر فایلی بفرستید اینجا و روی تلویزیون نمایش داده می‌شود.\n\n${this.usageLine(uid)}`, kb: null };
     const icon = { video: '🎬', image: '🖼', audio: '🎵', file: '📄', remote: '🌐' };
     const lines = rows.map((f, i) =>
-      `${page * PAGE + i + 1}. ${icon[f.kind] || '📄'}${f.storage === 'cf' ? '☁️' : ''} ${esc(short(f.name, 40))}\n     ${fmtSize(f.size)} · ${fmtDate(f.created_at)}`);
+      `${page * PAGE + i + 1}. ${icon[f.kind] || '📄'}${f.storage === 'cf' ? '☁️' : f.storage === 'vps' ? '🖥' : ''} ${esc(short(f.name, 40))}\n     ${fmtSize(f.size)} · ${fmtDate(f.created_at)}`);
     const kb = [];
     for (let i = 0; i < rows.length; i += 4) {
       kb.push(rows.slice(i, i + 4).map((f, j) => ({ text: `🗑 ${page * PAGE + i + j + 1}`, callback_data: `d:${f.id}:${page}` })));
@@ -1724,7 +1825,8 @@ export class Store extends DurableObject {
         return answer('پذیرفته شد');
       }
       case 'lq': return this.chooseQuality(cb, user, a, b);
-      case 'sc': return this.isAdmin(user.id) && (b === 'cf' || b === 'ar') ? this.storeChoice(cb, user, a, b) : answer();
+      case 'dy': return this.dupProceed(cb, user, a);
+      case 'sc': return this.isAdmin(user.id) && (b === 'cf' || b === 'ar' || b === 'vps') ? this.storeChoice(cb, user, a, b) : answer();
       case 'sup': await this.supportStart(chatId, user); return answer();
       case 'se_end': this.setState(user.id, null); await this.send(chatId, 'گفتگو با پشتیبانی بسته شد. هر وقت سؤالی داشتید، دوباره «💬 پشتیبانی» را بزنید.', this.menuKeyboard()); return answer();
       case 'tc': this.setState(user.id, 'tv'); await this.send(chatId, '🔢 کد ۸ حرفی که روی صفحه تلویزیون است را بفرستید:'); return answer();
@@ -2251,6 +2353,7 @@ export class Store extends DurableObject {
     for (const s of this.q(`SELECT id FROM files WHERE status='uploading'`)) this.sql.exec(`UPDATE files SET status='queued' WHERE id=?`, s.id);
     const f = this.one(`SELECT * FROM files WHERE status='queued' ORDER BY created_at LIMIT 1`);
     if (!f) return;
+    if (f.storage === 'vps') { this.sql.exec(`UPDATE files SET status='waiting_helper' WHERE id=?`, f.id); return; }
     this.sql.exec(`UPDATE files SET status='uploading' WHERE id=?`, f.id);
     try {
       const { res, size } = await this.tgFile(f.tg_file_id);
@@ -2297,7 +2400,7 @@ export class Store extends DurableObject {
       const { res } = await this.tgFile(f.thumb_file_id);
       const buf = await res.arrayBuffer();
       if (buf.byteLength > 1_000_000) return;
-      if (f.storage === 'cf') { this.sql.exec('UPDATE files SET thumb=? WHERE id=?', buf, f.id); return; }
+      if (f.storage === 'cf' || f.storage === 'vps') { this.sql.exec('UPDATE files SET thumb=? WHERE id=?', buf, f.id); return; }
       const key = `t/${f.id}.jpg`;
       await this.s3put(key, buf, { type: 'image/jpeg', cache: 'public, max-age=604800' });
       this.sql.exec('UPDATE files SET thumb_key=? WHERE id=?', key, f.id);
@@ -2317,7 +2420,7 @@ export class Store extends DurableObject {
     try { await this.bucketWatchdog(); } catch (e) { console.log('watchdog failed', String(e)); }
     try { await this.dailyBackup(); } catch (e) { console.log('backup failed', String(e)); }
     this.sql.exec('DELETE FROM seen2 WHERE at < ?', now - 3 * DAY);
-    this.sql.exec(`DELETE FROM files WHERE status IN ('link_choose','link_probe','link_pending','store_pending') AND created_at < ?`, now - 6 * 3600e3);
+    this.sql.exec(`DELETE FROM files WHERE status IN ('link_choose','link_probe','link_pending','store_pending','dup_pending') AND created_at < ?`, now - 6 * 3600e3);
     this.sql.exec('DELETE FROM seen');
     this.sql.exec('DELETE FROM pairs');
     for (const p of this.q('SELECT code FROM tv_pairs WHERE created_at < ? LIMIT 10', now - PAIR_TTL)) {
@@ -2481,17 +2584,22 @@ export class Store extends DurableObject {
   // ================================================================ large-file helper (GitHub Actions)
   async helperJobs(req) {
     const who = this.helperName(req);
-    if (who === 'vps') await this.vpsSeen();
+    if (who === 'vps') {
+      await this.vpsSeen();
+      const tunnel = new URL(req.url).searchParams.get('tunnel') || '';
+      if (/^[a-z0-9-]{3,80}\.trycloudflare\.com$/.test(tunnel)) this.meta('vps_tunnel', tunnel);
+    }
     const jobs = this.q(`SELECT id,name,size,mime,tg_file_id,obj_key,status,source_url,fmt,storage FROM files
         WHERE status IN ('waiting_helper','helper_uploading','link_probe','link_download')
-          AND (lease_until IS NULL OR lease_until < ? OR lease_by = ?) ORDER BY created_at`, Date.now(), who)
+          AND (lease_until IS NULL OR lease_until < ? OR lease_by = ?) AND (storage <> 'vps' OR ? = 'vps') ORDER BY created_at`, Date.now(), who, who)
       .map((j) => ({
         id: j.id, name: j.name, size: j.size, mime: j.mime, tg_file_id: j.tg_file_id, obj_key: j.obj_key, storage: j.storage, chunk: CHUNK,
         type: j.status === 'link_probe' ? 'probe' : j.source_url ? 'link' : 'tg',
         url: j.source_url, fmt: j.fmt ? JSON.parse(j.fmt) : null, disposition: this.disposition(j.name),
       }));
     const waiting = this.one(`SELECT COUNT(*) AS c FROM files WHERE status='link_choose' AND created_at > ?`, Date.now() - 10 * 60_000).c;
-    return Response.json({ jobs, waiting });
+    const vps_delete = who === 'vps' ? this.q('SELECT id FROM vps_del LIMIT 200').map((r) => r.id) : undefined;
+    return Response.json({ jobs, waiting, vps_delete });
   }
 
   async helperProgress(req, id) {
@@ -2532,7 +2640,7 @@ export class Store extends DurableObject {
     if (extra.thumb_key) this.sql.exec('UPDATE files SET thumb_key=? WHERE id=?', extra.thumb_key, id);
     if (extra.duration) this.sql.exec('UPDATE files SET duration=? WHERE id=?', Math.round(extra.duration), id);
     if (extra.width) this.sql.exec('UPDATE files SET width=?, height=? WHERE id=?', extra.width, extra.height || null, id);
-    const size = f.storage === 'cf' ? this.cfSize(id) : await this.s3head(f.obj_key);
+    const size = f.storage === 'cf' ? this.cfSize(id) : f.storage === 'vps' ? Math.max(0, Math.round(Number(extra.size) || 0)) : await this.s3head(f.obj_key);
     if (!size) return new Response(f.storage === 'cf' ? 'nothing uploaded' : 'object missing in Arvan', { status: 409 });
     await this.finishFile(this.one('SELECT * FROM files WHERE id=?', id), size);
     return Response.json({ ok: true, size });

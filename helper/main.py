@@ -98,6 +98,8 @@ async def process(job):
     log.info("job %s (%d bytes)", jid, size)  # no file names: run logs of a public repo are public
     loop = asyncio.get_running_loop()
     client = await telegram()
+    if job.get("storage") == "vps":
+        return await process_vps(job, client)
     # Cloudflare parts: 10 chunks (19 MB) so many files at once still fit in memory
     part_size = int(job.get("chunk") or 1_900_000) * 10 if cf else PART
     upload_id, parts, offset = None, [], 0
@@ -188,6 +190,37 @@ async def process(job):
 
 
 
+async def process_vps(job, client):
+    jid, size = job["id"], job["size"]
+    try:
+        if not VPS_STORE:
+            raise RuntimeError("no VPS storage on this helper")
+        if shutil.disk_usage(VPS_STORE).free < size + DISK_RESERVE:
+            raise RuntimeError("not enough disk on the VPS")
+        os.makedirs(os.path.join(VPS_STORE, jid), exist_ok=True)
+        tmp = vps_path(jid) + ".part"
+        done, last, started = 0, 0.0, time.time()
+        with open(tmp, "wb") as out:
+            async for piece in client.stream_media(job["tg_file_id"]):
+                out.write(piece)
+                done += len(piece)
+                if time.time() - last > 10:
+                    last = time.time()
+                    try:
+                        await call("POST", f"/helper/progress/{jid}", json={"done": done, "total": size, "speed": int(done / max(1.0, time.time() - started))}, tries=1)
+                    except PermissionError:
+                        raise RuntimeError("cancelled by user")
+                    except Exception:
+                        pass
+        os.replace(tmp, vps_path(jid))
+        await call("POST", f"/helper/finish/{jid}", json={"size": done})
+        log.info("job %s stored on VPS in %.0fs", jid, time.time() - started)
+    except Exception as e:
+        log.warning("job %s failed: %s", jid, type(e).__name__)
+        shutil.rmtree(os.path.join(VPS_STORE or "/nonexistent", jid), ignore_errors=True)
+        await fail(jid, e)
+
+
 async def reset_telegram():
     global tg
     if tg is not None:
@@ -276,7 +309,14 @@ async def download_link(job):
         path, info = await loop.run_in_executor(None, links.download, job["url"], job["fmt"], progress)
         size = os.path.getsize(path)
         cf = job.get("storage") == "cf"
-        if cf:
+        vps = job.get("storage") == "vps"
+        if vps:
+            if not VPS_STORE:
+                raise RuntimeError("no VPS storage on this helper")
+            os.makedirs(os.path.join(VPS_STORE, jid), exist_ok=True)
+            shutil.move(path, vps_path(jid))
+            path = None
+        elif cf:
             await upload_to_worker(jid, path, int(job.get("chunk") or 1_900_000))
         else:
             await loop.run_in_executor(None, lambda: s3.upload_file(path, BUCKET, key, ExtraArgs={
@@ -284,7 +324,7 @@ async def download_link(job):
         extra = {"duration": info.get("duration"), "width": info.get("width"), "height": info.get("height")}
         try:
             thumb = await loop.run_in_executor(None, links.fetch_thumbnail, info.get("thumbnail"))
-            if thumb and cf:
+            if thumb and (cf or vps):
                 await call("PUT", f"/helper/thumb/{jid}", data=thumb, tries=2)
             elif thumb:
                 tkey = f"t/{jid}.jpg"
@@ -293,7 +333,10 @@ async def download_link(job):
                 extra["thumb_key"] = tkey
         except Exception:
             log.warning("thumbnail skipped")
-        os.remove(path)
+        if path:
+            os.remove(path)
+        if vps:
+            extra["size"] = size
         for attempt in range(1, 6):  # Arvan can take a moment before the new object is visible
             try:
                 await call("POST", f"/helper/finish/{jid}", json=extra)
@@ -306,6 +349,69 @@ async def download_link(job):
     except Exception as e:
         log.warning("link %s failed: %s", jid, type(e).__name__)
         await fail(jid, e)
+
+
+# ---- owner's VPS storage: files live in VPS_STORE/<id>/file and are served on 127.0.0.1 only.
+# The Cloudflare quick tunnel (separate service) makes them reachable over HTTPS without opening a port;
+# every link is signed by the Worker (HMAC with the helper secret) and expires.
+VPS_STORE = os.environ.get("VPS_STORE")
+TUNNEL_METRICS = os.environ.get("TUNNEL_METRICS", "http://127.0.0.1:20241")
+FILE_PORT = int(os.environ.get("FILE_PORT", "8090"))
+
+
+def vps_path(jid):
+    return os.path.join(VPS_STORE, jid, "file")
+
+
+def vps_sig(jid, exp):
+    import hmac
+    return hmac.new(os.environ["HELPER_SECRET"].encode(), f"{jid}:{exp}".encode(), hashlib.sha256).hexdigest()[:32]
+
+
+async def start_file_server():
+    from aiohttp import web
+    import hmac as _hmac
+    import mimetypes as _mt
+
+    async def get_file(req):
+        jid, name = req.match_info["id"], req.match_info["name"]
+        try:
+            exp = int(req.query.get("exp", "0"))
+        except ValueError:
+            exp = 0
+        if exp < time.time() or not _hmac.compare_digest(req.query.get("sig", ""), vps_sig(jid, exp)):
+            return web.Response(status=403, text="link expired")
+        path = vps_path(jid)
+        if not (jid.isalnum() and os.path.isfile(path)):
+            return web.Response(status=404, text="not found")
+        ctype = _mt.guess_type(name)[0] or "application/octet-stream"
+        return web.FileResponse(path, headers={"Content-Type": ctype, "Cache-Control": "private, max-age=3600"})
+
+    app = web.Application()
+    app.router.add_route("GET", "/v/{id}/{name}", get_file)
+    runner = web.AppRunner(app, access_log=None)
+    await runner.setup()
+    await web.TCPSite(runner, "127.0.0.1", FILE_PORT).start()
+    log.info("file server on 127.0.0.1:%d", FILE_PORT)
+
+
+async def tunnel_host():
+    try:
+        async with http.get(TUNNEL_METRICS + "/quicktunnel", timeout=ClientTimeout(total=3)) as r:
+            return (await r.json(content_type=None)).get("hostname") or ""
+    except Exception:
+        return ""
+
+
+async def vps_deletes(ids):
+    done = []
+    for jid in ids:
+        if jid.isalnum():
+            shutil.rmtree(os.path.join(VPS_STORE, jid), ignore_errors=True)
+            done.append(jid)
+    if done:
+        await call("POST", "/helper/vpsdel", json={"ids": done}, tries=2)
+        log.info("removed %d file(s) from VPS storage", len(done))
 
 
 async def handle(job):
@@ -344,14 +450,20 @@ async def serve():
     global http
     http = ClientSession(timeout=ClientTimeout(total=None, sock_connect=30, sock_read=300))
     log.info("service started as %s (up to %d jobs at once)", HELPER_NAME, MAX_JOBS)
+    if VPS_STORE:
+        os.makedirs(VPS_STORE, exist_ok=True)
+        await start_file_server()
     running = {}  # job id -> task
     try:
         while True:
             try:
                 for jid in [j for j, t_ in running.items() if t_.done()]:
                     running.pop(jid)
-                data = await call("GET", "/helper/jobs", tries=2)
+                host = await tunnel_host() if VPS_STORE else ""
+                data = await call("GET", "/helper/jobs" + (f"?tunnel={host}" if host else ""), tries=2)
                 jobs = data.get("jobs", []) if isinstance(data, dict) else []
+                if VPS_STORE and isinstance(data, dict) and data.get("vps_delete"):
+                    await vps_deletes(data["vps_delete"])
                 for job in jobs:
                     if len(running) >= MAX_JOBS:
                         break
