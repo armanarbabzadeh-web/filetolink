@@ -4,7 +4,10 @@ Logs never contain URLs or titles (the repository and its run logs are public).
 """
 
 import glob
+import html
 import mimetypes
+import re
+import urllib.parse
 import os
 import tempfile
 import time
@@ -41,7 +44,27 @@ def _size(f, duration):
 
 
 def probe(url):
-    """Return {title, duration, thumbnail, formats:[{label, height, size, fid, audio}]}."""
+    """Return {title, duration, thumbnail, formats:[...]}: yt-dlp first, then the links in the page itself."""
+    try:
+        res = yt_probe(url)
+        if res["formats"] and res["formats"][0]["fid"] != "best":
+            return res
+    except Exception as e:
+        res, err = None, e
+    else:
+        err = None
+    try:
+        page = page_probe(url)
+    except Exception:
+        page = None
+    if page:
+        return page
+    if res:
+        return res
+    raise err
+
+
+def yt_probe(url):
     with yt_dlp.YoutubeDL({**BASE, "skip_download": True}) as y:
         info = y.extract_info(url, download=False)
     if info.get("_type") == "playlist" and info.get("entries"):
@@ -83,6 +106,8 @@ def probe(url):
 
 def download(url, fmt, on_progress):
     """Download in the chosen format. Returns (path, info)."""
+    if fmt.get("direct"):
+        return direct_download(fmt, on_progress)
     tmp = tempfile.mkdtemp(prefix="ttvs-")
     state = {"last": 0.0}
 
@@ -113,3 +138,99 @@ def fetch_thumbnail(url):
     with urllib.request.urlopen(req, timeout=20) as r:
         data = r.read(2_000_000)
     return data if len(data) > 500 else None
+
+
+# ---- fallback for sites yt-dlp doesn't know: read the page like a browser and use the links the site
+# itself offers (<source> tags of its player, "download" buttons). Only plain links in the page are used;
+# scrambled player links and "are you a robot" checks are left alone.
+UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"
+
+
+def _opener():
+    import http.cookiejar
+    jar = http.cookiejar.CookieJar()
+    return urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar)), jar
+
+
+def _cookie_header(jar):
+    return "; ".join(f"{c.name}={c.value}" for c in jar)
+
+
+def _attr(tag, name):
+    m = re.search(name + r"""\s*=\s*(["'])(.*?)\1""", tag, re.I | re.S)
+    return html.unescape(m.group(2)).strip() if m else ""
+
+
+def _check(op, url, referer):
+    """(size, ok) for a candidate link: must answer with video/audio content."""
+    req = urllib.request.Request(url, headers={"User-Agent": UA, "Referer": referer, "Range": "bytes=0-0"})
+    with op.open(req, timeout=25) as r:
+        ctype = (r.headers.get("Content-Type") or "").lower()
+        rng = r.headers.get("Content-Range") or ""
+        size = int(rng.rsplit("/", 1)[-1]) if "/" in rng and rng.rsplit("/", 1)[-1].isdigit() else int(r.headers.get("Content-Length") or 0)
+        r.read(1)
+    return size, ctype.startswith(("video/", "audio/")) or ctype == "application/octet-stream"
+
+
+def page_probe(url):
+    op, jar = _opener()
+    with op.open(urllib.request.Request(url, headers={"User-Agent": UA}), timeout=30) as r:
+        page = r.read(3_000_000).decode("utf-8", "replace")
+    found = []  # (label, link)
+    for tag in re.findall(r"<source\b[^>]*>", page, re.I):
+        src, typ = _attr(tag, "src"), _attr(tag, "type").lower()
+        if src and (typ.startswith("video/") or re.search(r"\.(mp4|webm|m4v)\b", src, re.I)):
+            found.append((_attr(tag, "label") or _attr(tag, "res") or _attr(tag, "size"), src))
+    for tag, text in re.findall(r"(<a\b[^>]*>)([^<]{0,80})", page, re.I):
+        href = _attr(tag, "href")
+        if href and ("download" in tag.lower()) and re.search(r"\.(mp4|webm|m4v|mkv)\b", href, re.I):
+            found.append((html.unescape(text).strip(), href))
+    seen, formats = set(), []
+    for label, link in found:
+        link = urllib.parse.urljoin(url, link)
+        if link in seen or re.search(r"/(preview|thumbs?|screenshots?)/", link, re.I):
+            continue
+        seen.add(link)
+        try:
+            size, ok = _check(op, link, url)
+        except Exception:
+            continue
+        if ok:
+            formats.append({"label": (label or "MP4")[:40], "height": 0, "size": size, "fid": "direct", "audio": False,
+                            "direct": link, "referer": url, "cookie": _cookie_header(jar)})
+        if len(formats) >= 6:
+            break
+    if not formats:
+        return None
+    formats.sort(key=lambda f: f["size"], reverse=True)
+    def meta(prop):
+        m = re.search(r"""<meta[^>]+(?:property|name)=["']%s["'][^>]*>""" % re.escape(prop), page, re.I)
+        return _attr(m.group(0), "content") if m else ""
+    for f in formats:
+        f["thumb"] = urllib.parse.urljoin(url, meta("og:image")) if meta("og:image") else None
+    title = meta("og:title") or html.unescape((re.search(r"<title[^>]*>(.*?)</title>", page, re.I | re.S) or [None, "video"])[1]).strip()
+    return {"title": title or "video", "duration": 0, "thumbnail": formats[0]["thumb"], "formats": formats}
+
+
+def direct_download(fmt, on_progress):
+    tmp = tempfile.mkdtemp(prefix="ttvs-")
+    path = os.path.join(tmp, "media.mp4")
+    headers = {"User-Agent": UA, "Referer": fmt.get("referer") or ""}
+    if fmt.get("cookie"):
+        headers["Cookie"] = fmt["cookie"]
+    req = urllib.request.Request(fmt["direct"], headers=headers)
+    done, last, started = 0, 0.0, time.time()
+    with urllib.request.urlopen(req, timeout=60) as r, open(path, "wb") as out:
+        total = int(r.headers.get("Content-Length") or 0)
+        while True:
+            chunk = r.read(1024 * 1024)
+            if not chunk:
+                break
+            out.write(chunk)
+            done += len(chunk)
+            if time.time() - last > 10:
+                last = time.time()
+                on_progress(done, total, done / max(1.0, time.time() - started))
+    if done < 1000:
+        raise RuntimeError("download produced no file")
+    return path, {"thumbnail": fmt.get("thumb")}

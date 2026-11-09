@@ -2394,7 +2394,7 @@ export class Store extends DurableObject {
     if (p === '/api/admin/helper') return Response.json(this.helperStatus());
     if (p === '/api/admin/files') {
       const owner = url.searchParams.get('owner');
-      const cols = 'id,name,size,status,kind,owner,created_at,storage';
+      const cols = 'id,name,size,status,kind,owner,created_at,storage,error,lease_by';
       return Response.json(owner
         ? this.q(`SELECT ${cols} FROM files WHERE owner=? ORDER BY created_at`, Number(owner))
         : this.q(`SELECT ${cols} FROM files ORDER BY created_at`));
