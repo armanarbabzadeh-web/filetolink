@@ -1517,6 +1517,7 @@ export class Store extends DurableObject {
     return {
       vps_seen: Number(this.meta('vps_seen') || 0) || null, vps_alive: this.vpsAlive(), vps_down: !!this.meta('vps_down'),
       gh_woke: Number(this.meta('gh_woke') || 0) || null, open_since: Number(this.meta('open_since') || 0) || null,
+      vps_tunnel: !!this.meta('vps_tunnel'), vps_used: this.vpsUsed(), vps_free: this.vpsFree(),
       jobs: this.q(`SELECT id,status,lease_by,lease_until FROM files WHERE status IN ${HELPER_ST}`),
     };
   }
