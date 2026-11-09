@@ -29,7 +29,7 @@ data class FileItem(
 data class Manifest(
     val userName: String, val plan: String, val expiresAt: Long?,
     val used: Long, val quota: Long?, val blocked: Boolean, val reportUrl: String?,
-    val files: List<FileItem>,
+    val files: List<FileItem>, val deleteUrl: String? = null,
 )
 
 class UnlinkedException : RuntimeException("unlinked")
@@ -45,6 +45,11 @@ object Prefs {
     fun takeReason(ctx: Context): String? = p(ctx).getString("reason", null)?.also { setReason(ctx, null) }
     fun subsOff(ctx: Context) = p(ctx).getBoolean("subs_off", false)
     fun setSubsOff(ctx: Context, off: Boolean) = p(ctx).edit().putBoolean("subs_off", off).apply()
+    fun deleteUrl(ctx: Context): String? = p(ctx).getString("delete_url", null)
+    fun setDeleteUrl(ctx: Context, url: String?) = p(ctx).edit().putString("delete_url", url).apply()
+    /** Files deleted on the TV that the server hasn't removed yet (hidden meanwhile). */
+    fun pendingDeletes(ctx: Context): Set<String> = p(ctx).getStringSet("pending_del", emptySet())!!.toSet()
+    fun setPendingDeletes(ctx: Context, ids: Set<String>) = p(ctx).edit().putStringSet("pending_del", ids).apply()
     fun external(ctx: Context) = p(ctx).getBoolean("external", false)
     fun setExternal(ctx: Context, on: Boolean) = p(ctx).edit().putBoolean("external", on).apply()
 }
@@ -118,6 +123,7 @@ object Api {
             quota = if (j.isNull("quota")) null else j.optLong("quota"),
             blocked = w?.optBoolean("blocked") ?: false,
             reportUrl = j.optString("report_url").takeIf { it.startsWith("http") },
+            deleteUrl = j.optString("delete_url").takeIf { it.startsWith("http") },
             files = (0 until arr.length()).map { i ->
                 val f = arr.getJSONObject(i)
                 FileItem(

@@ -53,13 +53,23 @@ s3 = boto3.client(
 http: ClientSession | None = None
 
 PART = 16 * 1024 * 1024  # S3 multipart part size
-PARALLEL = 8             # parts in flight at once to Arvan (Finland -> Iran: ~4 MB/s per stream, ~15 MB/s with 8)
-POOL = ThreadPoolExecutor(PARALLEL)
+PARALLEL = 6             # parts in flight per file to Arvan (Finland -> Iran: ~4 MB/s per stream, ~15 MB/s with 8)
+MAX_JOBS = int(os.environ.get("MAX_JOBS", "3"))  # files handled at the same time in service mode
+POOL = ThreadPoolExecutor(12)  # upload threads shared by all files
 tg = None
+TG_LOCK = asyncio.Lock()
 
 
 async def telegram():
     """Log in as the main bot over MTProto (needed for files over 20 MB). Details come from the Worker."""
+    global tg
+    async with TG_LOCK:  # several jobs may ask at once; log in only once
+        if tg is None:
+            await _login()
+    return tg
+
+
+async def _login():
     global tg
     if tg is None:
         from pyrogram import Client
@@ -331,20 +341,27 @@ async def serve():
     """VPS: stay running, check the queue every few seconds (this is also the VPS heartbeat)."""
     global http
     http = ClientSession(timeout=ClientTimeout(total=None, sock_connect=30, sock_read=300))
-    log.info("service started as %s", HELPER_NAME)
+    log.info("service started as %s (up to %d jobs at once)", HELPER_NAME, MAX_JOBS)
+    running = {}  # job id -> task
     try:
         while True:
             try:
+                for jid in [j for j, t_ in running.items() if t_.done()]:
+                    running.pop(jid)
                 data = await call("GET", "/helper/jobs", tries=2)
                 jobs = data.get("jobs", []) if isinstance(data, dict) else []
                 for job in jobs:
-                    await handle(job)
-                if not jobs:
-                    await asyncio.sleep(POLL)
+                    if len(running) >= MAX_JOBS:
+                        break
+                    if job["id"] not in running:
+                        running[job["id"]] = asyncio.create_task(handle(job))
+                await asyncio.sleep(POLL)
             except Exception as e:
                 log.warning("queue check failed: %s", type(e).__name__)
                 await asyncio.sleep(15)
     finally:
+        for t_ in running.values():
+            t_.cancel()
         await reset_telegram()
         await http.close()
 

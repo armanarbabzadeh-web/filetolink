@@ -86,7 +86,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     // subtitle files are not shown on their own: they appear as subtitle tracks of the videos
-    private fun visible() = all.filter { !Subs.isSub(it) && (filter == null || it.kind == filter) }
+    private fun visible(): List<FileItem> {
+        val gone = Prefs.pendingDeletes(this)
+        return all.filter { it.id !in gone && !Subs.isSub(it) && (filter == null || it.kind == filter) }
+    }
 
     private fun render(focusFirst: Boolean) {
         val list = visible()
@@ -99,6 +102,15 @@ class MainActivity : AppCompatActivity() {
         try {
             val m = Api.manifest(manifestUrl)
             Prefs.setReportUrl(this, m.reportUrl)
+            Prefs.setDeleteUrl(this, m.deleteUrl)
+            // forget deletes the server has done; keep hiding (and re-sending) the others
+            val pending = Prefs.pendingDeletes(this)
+            if (pending.isNotEmpty()) {
+                val ids = m.files.map { it.id }.toSet()
+                val left = pending.intersect(ids)
+                Prefs.setPendingDeletes(this, left)
+                if (left.isNotEmpty()) sendDeletes(left)
+            }
             blocked = m.blocked
             warn.visibility = if (blocked) View.VISIBLE else View.GONE
             val quota = m.quota?.let { "‏ از ‏${Fmt.faSize(it)}" } ?: ""
@@ -171,28 +183,47 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** Long press (or hold OK) on a video: choose the player. */
+    /** Long press (or hold OK): player choice for videos, and delete for every file. */
     private fun menu(f: FileItem) {
-        if (f.kind != "video" && f.kind != "audio") return open(f)
-        if (blocked) return toast(getString(R.string.blocked))
+        val media = f.kind == "video" || f.kind == "audio"
         val always = Prefs.external(this)
-        val items = arrayOf(
-            getString(R.string.play_here),
-            getString(R.string.play_external),
-            getString(if (always) R.string.always_here else R.string.always_external),
-        )
+        val actions = mutableListOf<Pair<String, () -> Unit>>()
+        if (media && !blocked) {
+            actions += getString(R.string.play_here) to { play(f) }
+            actions += getString(R.string.play_external) to { playExternal(f) }
+            actions += getString(if (always) R.string.always_here else R.string.always_external) to {
+                Prefs.setExternal(this, !always)
+                toast(getString(if (always) R.string.now_here else R.string.now_external))
+            }
+        } else if (!media) {
+            actions += getString(R.string.open_file) to { open(f) }
+        }
+        if (Prefs.deleteUrl(this) != null) actions += getString(R.string.delete_file) to { confirmDelete(f) }
         AlertDialog.Builder(this, R.style.AppDialog)
             .setTitle(Fmt.title(f.name))
-            .setItems(items) { _, which ->
-                when (which) {
-                    0 -> play(f)
-                    1 -> playExternal(f)
-                    2 -> {
-                        Prefs.setExternal(this, !always)
-                        toast(getString(if (always) R.string.now_here else R.string.now_external))
-                    }
-                }
-            }
+            .setItems(actions.map { it.first }.toTypedArray()) { _, which -> actions[which].second() }
             .show()
+    }
+
+    private fun confirmDelete(f: FileItem) {
+        AlertDialog.Builder(this, R.style.AppDialog)
+            .setTitle(R.string.delete_q)
+            .setMessage(Fmt.title(f.name) + "\n\n" + getString(R.string.delete_msg))
+            .setPositiveButton(R.string.delete_yes) { _, _ ->
+                val ids = Prefs.pendingDeletes(this) + f.id
+                Prefs.setPendingDeletes(this, ids)
+                render(focusFirst = false)
+                sendDeletes(ids)
+                toast(getString(R.string.deleted))
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    private fun sendDeletes(ids: Set<String>) {
+        val url = Prefs.deleteUrl(this) ?: return
+        val body = org.json.JSONObject().put("ids", org.json.JSONArray(ids.toList())).toString()
+        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) { runCatching { Net.putJson(url, body) } }
     }
 
     private fun confirmLogout() {

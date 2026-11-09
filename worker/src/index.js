@@ -785,6 +785,7 @@ export class Store extends DurableObject {
     this.sql.exec('DELETE FROM devices WHERE token=?', d.token);
     await this.s3del(`m/${d.token}.json`);
     await this.s3del(`r/${d.token}.json`);
+    await this.s3del(`d/${d.token}.json`);
   }
 
   // ---- TV app distribution: the APK lives on Arvan (app/TeleTVShare.apk), sent in Telegram on request
@@ -1236,6 +1237,43 @@ export class Store extends DurableObject {
   }
 
   // ---- the bucket must never be publicly listable (files are public one by one)
+  // ---- deleting from the TV. The TV can only reach Arvan, so it PUTs {"ids":[...]} to a presigned
+  // d/<token>.json (link in its manifest). Each alarm tick lists d/ (one request) and handles them.
+  async tvDeletes() {
+    const r = await this.s3().fetch(`${this.env.ARVAN_ENDPOINT}/${this.env.ARVAN_BUCKET}?list-type=2&prefix=d/&max-keys=20`,
+      { headers: { 'x-amz-content-sha256': 'UNSIGNED-PAYLOAD' } }).catch(() => null);
+    if (!r || !r.ok) return;
+    const keys = [...(await r.text()).matchAll(/<Key>(d\/[A-Za-z0-9]+\.json)<\/Key>/g)].map((m) => m[1]);
+    for (const key of keys) {
+      if (this.budget() < 12) return;
+      const token = key.slice(2, -5);
+      const d = this.one('SELECT * FROM devices WHERE token=?', token);
+      let ids = [];
+      if (d) {
+        try { ids = ((await (await this.s3get(key))?.json())?.ids || []).filter((x) => /^[A-Za-z0-9]{16}$/.test(x)); } catch { ids = []; }
+      }
+      const files = d && ids.length
+        ? this.q(`SELECT id,name,obj_key,thumb_key FROM files WHERE owner=? AND id IN (${ids.slice(0, 50).map(() => '?').join(',')})`, d.user_id, ...ids.slice(0, 50))
+        : [];
+      const now = files.slice(0, 8);   // 2 Arvan requests per file; the rest next minute
+      for (const f of now) {
+        this.sql.exec('DELETE FROM chunks WHERE file_id=?', f.id);
+        this.sql.exec('DELETE FROM files WHERE id=?', f.id);
+        await this.s3del(f.obj_key);
+        await this.s3del(f.thumb_key);
+      }
+      const rest = files.slice(8).map((f) => f.id);
+      if (rest.length) await this.putJson(key, { ids: rest }, 'private');
+      else await this.s3del(key);
+      if (now.length) {
+        await this.writeManifest(d.user_id);
+        const names = now.map((f) => `• ${esc(short(f.name, 40))}`).join('\n');
+        const u = this.user(d.user_id);
+        if (u) await this.send(d.user_id, `🗑 از روی تلویزیون پاک شد:\n${names}\n\n${this.usageLine(d.user_id)}`);
+      }
+    }
+  }
+
   async bucketWatchdog() {
     const r = await fetch(`${this.env.ARVAN_PUBLIC_URL}/?max-keys=1`, { headers: { 'user-agent': 'teletvshare-watchdog' } }).catch(() => null);
     if (!r || r.status !== 200) return;
@@ -1427,7 +1465,8 @@ export class Store extends DurableObject {
     if (!open) { this.meta('open_since', null); return; }
     const since = Number(this.meta('open_since') || 0) || now;
     this.meta('open_since', since);
-    if (now - since >= this.tm('HANDOFF') && now - Number(this.meta('gh_woke') || 0) > 4 * 60_000) await this.wakeHelper(true);
+    const wait = this.vpsAlive() ? 15 * 60_000 : this.tm('HANDOFF');
+    if (now - since >= wait && now - Number(this.meta('gh_woke') || 0) > 4 * 60_000) await this.wakeHelper(true);
   }
 
   helperStatus() {
@@ -1478,6 +1517,7 @@ export class Store extends DurableObject {
         blocked: Number.isFinite(lim.watchCap) && mu.watch >= lim.watchCap,
       },
       report_url: await this.presignPut(`r/${d.token}.json`),
+      delete_url: await this.presignPut(`d/${d.token}.json`),
       files: files.map((f) => ({
         id: f.id, name: f.name, mime: f.mime, size: f.size, kind: f.kind,
         width: f.width, height: f.height, duration: f.duration, created_at: f.created_at,
@@ -2172,9 +2212,10 @@ export class Store extends DurableObject {
     }
     if (this.budget() > 8) await this.processQueue();
     try { if (this.budget() > 4) await this.helperWatch(); } catch (e) { console.log('helper watch failed', e.stack || e); }
+    try { if (this.budget() > 14 && this.one('SELECT 1 AS x FROM devices LIMIT 1')) await this.tvDeletes(); } catch (e) { console.log('tv deletes failed', e.stack || e); }
     const queued = this.one(`SELECT 1 AS x FROM files WHERE status='queued' LIMIT 1`);
     const helperWait = this.one(`SELECT 1 AS x FROM files WHERE status IN ${HELPER_ST} LIMIT 1`);
-    const vpsWatch = this.meta('vps_seen') && !this.meta('vps_down');
+    const vpsWatch = (this.meta('vps_seen') && !this.meta('vps_down')) || this.one('SELECT 1 AS x FROM devices LIMIT 1');
     await this.ctx.storage.setAlarm(Date.now() + (queued ? 50 : helperWait || vpsWatch ? 60_000 : 10 * 60_000));
   }
 

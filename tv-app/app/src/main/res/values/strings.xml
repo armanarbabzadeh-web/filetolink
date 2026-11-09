@@ -43,6 +43,12 @@
     <string name="now_external">از این به بعد ویدیوها با VLC / پلیر دیگر باز می‌شوند. برای برگرداندن، روی یک ویدیو OK را نگه دارید.</string>
     <string name="now_here">از این به بعد ویدیوها در خود TeleTVShare پخش می‌شوند.</string>
     <string name="no_external">پلیر دیگری روی تلویزیون نصب نیست. VLC را از فروشگاه برنامه‌ها نصب کنید.</string>
+    <string name="open_file">باز کردن</string>
+    <string name="delete_file">🗑 حذف فایل</string>
+    <string name="delete_q">این فایل حذف شود؟</string>
+    <string name="delete_msg">از تلویزیون و از فضای شما پاک می‌شود و برنمی‌گردد.</string>
+    <string name="delete_yes">بله، حذف کن</string>
+    <string name="deleted">حذف شد</string>
     <string name="pair_wait">منتظر تأیید از تلگرام…</string>
     <string name="pair_err_tls">⚠️ اتصال امن به سرور برقرار نشد. تاریخ و ساعت تلویزیون را از تنظیمات درست کنید (حالت خودکار).</string>
     <string name="pair_err_net">⚠️ تلویزیون به سرور وصل نمی‌شود. اینترنت تلویزیون را بررسی کنید؛ اگر VPN روشن است، خاموشش کنید.</string>
