@@ -1342,6 +1342,7 @@ export class Store extends DurableObject {
     if (cf && f.size > this.cfFree()) return answer(`فضای Cloudflare کافی نیست (آزاد: ${fmtSize(this.cfFree())}).`, true);
     if (vps && f.size > this.vpsFree()) return answer(`فضای VPS کافی نیست (آزاد: ${fmtSize(this.vpsFree())}).`, true);
     if (vps && !this.vpsAlive()) return answer('VPS الان در دسترس نیست. Cloudflare یا آروان را انتخاب کنید.', true);
+    if (vps && !this.meta('vps_tunnel')) return answer('فضای VPS هنوز راه‌اندازی نشده (تونل روی سرور نصب نیست). Cloudflare یا آروان را انتخاب کنید.', true);
     if (f.source_url) {
       this.sql.exec(`UPDATE files SET status='link_probe', storage=? WHERE id=?`, storage, id);
       await this.edit(f.chat_id, f.msg_id, `🔎 در حال بررسی لینک… (${label})\nکیفیت‌های موجود تا حدود یک دقیقه دیگر نمایش داده می‌شود.`, [[{ text: '❌ لغو', callback_data: `c:${id}` }]]);
@@ -2586,8 +2587,11 @@ export class Store extends DurableObject {
     const who = this.helperName(req);
     if (who === 'vps') {
       await this.vpsSeen();
-      const tunnel = new URL(req.url).searchParams.get('tunnel') || '';
-      if (/^[a-z0-9-]{3,80}\.trycloudflare\.com$/.test(tunnel)) this.meta('vps_tunnel', tunnel);
+      const q = new URL(req.url).searchParams;
+      if (q.has('tunnel')) {
+        const tunnel = q.get('tunnel') || '';
+        this.meta('vps_tunnel', /^[a-z0-9-]{3,80}\.trycloudflare\.com$/.test(tunnel) ? tunnel : null);
+      }
     }
     const jobs = this.q(`SELECT id,name,size,mime,tg_file_id,obj_key,status,source_url,fmt,storage FROM files
         WHERE status IN ('waiting_helper','helper_uploading','link_probe','link_download')

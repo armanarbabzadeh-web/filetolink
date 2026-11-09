@@ -460,7 +460,8 @@ async def serve():
                 for jid in [j for j, t_ in running.items() if t_.done()]:
                     running.pop(jid)
                 host = await tunnel_host() if VPS_STORE else ""
-                data = await call("GET", "/helper/jobs" + (f"?tunnel={host}" if host else ""), tries=2)
+                # with VPS storage: always say whether the tunnel is up (empty = down, so the Worker stops offering it)
+                data = await call("GET", "/helper/jobs" + (f"?tunnel={host}" if VPS_STORE else ""), tries=2)
                 jobs = data.get("jobs", []) if isinstance(data, dict) else []
                 if VPS_STORE and isinstance(data, dict) and data.get("vps_delete"):
                     await vps_deletes(data["vps_delete"])
