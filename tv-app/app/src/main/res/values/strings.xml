@@ -35,6 +35,14 @@
     <string name="update_open_settings">باز کردن تنظیمات</string>
     <string name="update_failed">دانلود یا نصب نسخه جدید انجام نشد. اینترنت را بررسی کنید و دوباره امتحان کنید، یا اپ جدید را از دکمه «📲 دریافت اپ تلویزیون» در بات بگیرید.</string>
     <string name="update_retry">دوباره</string>
+    <string name="open_with">پخش با…</string>
+    <string name="play_here">▶️ پخش در TeleTVShare</string>
+    <string name="play_external">🎞 پخش با VLC یا پلیر دیگر</string>
+    <string name="always_external">همیشه با VLC / پلیر دیگر پخش شود</string>
+    <string name="always_here">همیشه در خود TeleTVShare پخش شود</string>
+    <string name="now_external">از این به بعد ویدیوها با VLC / پلیر دیگر باز می‌شوند. برای برگرداندن، روی یک ویدیو OK را نگه دارید.</string>
+    <string name="now_here">از این به بعد ویدیوها در خود TeleTVShare پخش می‌شوند.</string>
+    <string name="no_external">پلیر دیگری روی تلویزیون نصب نیست. VLC را از فروشگاه برنامه‌ها نصب کنید.</string>
     <string name="pair_wait">منتظر تأیید از تلگرام…</string>
     <string name="pair_err_tls">⚠️ اتصال امن به سرور برقرار نشد. تاریخ و ساعت تلویزیون را از تنظیمات درست کنید (حالت خودکار).</string>
     <string name="pair_err_net">⚠️ تلویزیون به سرور وصل نمی‌شود. اینترنت تلویزیون را بررسی کنید؛ اگر VPN روشن است، خاموشش کنید.</string>

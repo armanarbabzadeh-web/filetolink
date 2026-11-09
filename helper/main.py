@@ -23,6 +23,7 @@ import shutil
 import sys
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import boto3
 from aiohttp import ClientSession, ClientTimeout
@@ -47,11 +48,13 @@ s3 = boto3.client(
     region_name=os.environ["ARVAN_REGION"],
     aws_access_key_id=os.environ["ARVAN_ACCESS_KEY"],
     aws_secret_access_key=os.environ["ARVAN_SECRET_KEY"],
-    config=Config(s3={"addressing_style": "path"}, signature_version="s3v4", retries={"max_attempts": 5}),
+    config=Config(s3={"addressing_style": "path"}, signature_version="s3v4", retries={"max_attempts": 5}, max_pool_connections=12),
 )
 http: ClientSession | None = None
 
 PART = 16 * 1024 * 1024  # S3 multipart part size
+PARALLEL = 8             # parts in flight at once to Arvan (Finland -> Iran: ~4 MB/s per stream, ~15 MB/s with 8)
+POOL = ThreadPoolExecutor(PARALLEL)
 tg = None
 
 
@@ -94,17 +97,35 @@ async def process(job):
         ))
         upload_id = mp["UploadId"]
     buf, done, last_report, started = bytearray(), 0, 0.0, time.time()
+    pending = set()      # Arvan parts being uploaded right now
+    next_part = 0
+    sem = asyncio.Semaphore(PARALLEL)
+
+    async def put_part(n, data):
+        try:
+            res = await loop.run_in_executor(POOL, lambda: s3.upload_part(
+                Bucket=BUCKET, Key=key, UploadId=upload_id, PartNumber=n, Body=data))
+            parts.append({"PartNumber": n, "ETag": res["ETag"]})
+        finally:
+            sem.release()
 
     async def flush(data):
-        nonlocal offset
-        if cf:
+        nonlocal offset, next_part
+        if cf:  # the owner's Cloudflare storage takes parts in order
             await call("PUT", f"/helper/upload/{jid}?offset={offset}", data=data)
             offset += len(data)
             return
-        n = len(parts) + 1
-        res = await loop.run_in_executor(None, lambda: s3.upload_part(
-            Bucket=BUCKET, Key=key, UploadId=upload_id, PartNumber=n, Body=data))
-        parts.append({"PartNumber": n, "ETag": res["ETag"]})
+        await sem.acquire()  # at most PARALLEL parts in memory / in flight
+        for t_ in [t_ for t_ in pending if t_.done()]:
+            pending.discard(t_)
+            t_.result()  # re-raise a failed part
+        next_part += 1
+        pending.add(asyncio.create_task(put_part(next_part, data)))
+
+    async def drain():
+        if pending:
+            await asyncio.gather(*pending)
+            pending.clear()
 
     completed = False
     try:
@@ -123,9 +144,11 @@ async def process(job):
                     raise RuntimeError("cancelled by user")
                 except Exception:
                     pass
-        if buf or (not parts and not offset):
+        if buf or (not next_part and not offset):
             await flush(bytes(buf))
+        await drain()
         if not cf:
+            parts.sort(key=lambda x: x["PartNumber"])
             await loop.run_in_executor(None, lambda: s3.complete_multipart_upload(
                 Bucket=BUCKET, Key=key, UploadId=upload_id, MultipartUpload={"Parts": parts}))
         completed = True
@@ -142,6 +165,8 @@ async def process(job):
         log.warning("job %s failed: %s", jid, type(e).__name__)
         if any(k in type(e).__name__ for k in ("Auth", "Unauthorized", "Revoked", "Connection")):
             await reset_telegram()
+        for t_ in pending:
+            t_.cancel()
         if upload_id and not completed:
             try:
                 await loop.run_in_executor(None, lambda: s3.abort_multipart_upload(Bucket=BUCKET, Key=key, UploadId=upload_id))

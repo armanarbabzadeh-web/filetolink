@@ -2216,7 +2216,7 @@ export class Store extends DurableObject {
     if (f.src_msg_id) await this.tg('deleteMessage', { chat_id: f.chat_id, message_id: f.src_msg_id });
     const hasTv = this.one('SELECT 1 AS x FROM devices WHERE user_id=?', f.owner);
     await this.edit(f.chat_id, f.msg_id,
-      `✅ <b>${esc(f.name)}</b> (${fmtSize(size)}) ذخیره شد${hasTv ? ' و روی تلویزیون نمایش داده می‌شود.' : '.\n📺 برای دیدن روی تلویزیون، تلویزیون را وصل کنید.'}\n\n${this.usageLine(f.owner)}`,
+      `✅ <b>${esc(f.name)}</b> (${fmtSize(size)}) ذخیره شد${hasTv ? ' و روی تلویزیون نمایش داده می‌شود.' : '.\n📺 برای دیدن روی تلویزیون، تلویزیون را وصل کنید.'}${/\.(srt|vtt|ass|ssa)$/i.test(f.name) ? '\n\n📝 این فایل زیرنویس است و جدا نمایش داده نمی‌شود: موقع پخش ویدیو از دکمه زیرنویس (CC) انتخابش کنید. اگر اسمش با اسم ویدیو یکی باشد (مثل movie.mp4 و movie.srt)، خودکار روشن می‌شود.' : ''}\n\n${this.usageLine(f.owner)}`,
       hasTv ? [[{ text: '🗑 پاک کردن', callback_data: `d:${f.id}:0` }]]
         : [[{ text: '📺 اتصال تلویزیون', callback_data: 't' }], [{ text: '🗑 پاک کردن', callback_data: `d:${f.id}:0` }]]);
   }

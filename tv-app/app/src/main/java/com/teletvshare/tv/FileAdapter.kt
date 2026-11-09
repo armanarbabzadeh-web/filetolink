@@ -9,7 +9,7 @@ import androidx.recyclerview.widget.RecyclerView
 import coil.load
 import coil.transform.RoundedCornersTransformation
 
-class FileAdapter(private val onOpen: (FileItem) -> Unit) : RecyclerView.Adapter<FileAdapter.VH>() {
+class FileAdapter(private val onOpen: (FileItem) -> Unit, private val onMenu: (FileItem) -> Unit = {}) : RecyclerView.Adapter<FileAdapter.VH>() {
 
     var items: List<FileItem> = emptyList()
         private set
@@ -57,6 +57,7 @@ class FileAdapter(private val onOpen: (FileItem) -> Unit) : RecyclerView.Adapter
                 center.alpha = 0.55f
             }
             itemView.setOnClickListener { onOpen(f) }
+            itemView.setOnLongClickListener { onMenu(f); true }
             itemView.setOnFocusChangeListener { view, focused ->
                 val s = if (focused) 1.08f else 1f
                 view.animate().scaleX(s).scaleY(s).setDuration(140).start()

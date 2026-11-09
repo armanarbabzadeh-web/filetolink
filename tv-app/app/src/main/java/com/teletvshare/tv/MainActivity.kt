@@ -43,7 +43,7 @@ class MainActivity : AppCompatActivity() {
         warn = findViewById(R.id.warn)
         findViewById<TextView>(R.id.emptyBody).text = getString(R.string.empty_body, BuildConfig.BOT_USERNAME)
 
-        adapter = FileAdapter(::open)
+        adapter = FileAdapter(::open, ::menu)
         grid.layoutManager = GridLayoutManager(this, 4)
         grid.adapter = adapter
 
@@ -85,7 +85,8 @@ class MainActivity : AppCompatActivity() {
         render(focusFirst = false)
     }
 
-    private fun visible() = if (filter == null) all else all.filter { it.kind == filter }
+    // subtitle files are not shown on their own: they appear as subtitle tracks of the videos
+    private fun visible() = all.filter { !Subs.isSub(it) && (filter == null || it.kind == filter) }
 
     private fun render(focusFirst: Boolean) {
         val list = visible()
@@ -131,10 +132,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
         when (f.kind) {
-            "video", "audio" -> startActivity(
-                Intent(this, PlayerActivity::class.java)
-                    .putExtra("url", f.url).putExtra("title", f.name).putExtra("audio", f.kind == "audio")
-            )
+            "video", "audio" -> if (Prefs.external(this)) playExternal(f) else play(f)
             "image" -> {
                 val images = visible().filter { it.kind == "image" }
                 startActivity(
@@ -151,6 +149,50 @@ class MainActivity : AppCompatActivity() {
                 .setPositiveButton(android.R.string.ok, null)
                 .show()
         }
+    }
+
+    private fun play(f: FileItem) {
+        PlayerActivity.pendingSubs = if (f.kind == "video") Subs.forVideo(f, all) else emptyList()
+        startActivity(
+            Intent(this, PlayerActivity::class.java)
+                .putExtra("url", f.url).putExtra("title", f.name).putExtra("audio", f.kind == "audio")
+        )
+    }
+
+    private fun playExternal(f: FileItem) {
+        if (External.open(this, f, Subs.forVideo(f, all))) {
+            Usage.add(this, f.size) // an outside player streams the whole file; count it for fair use
+            lifecycleScope.launch { Usage.report(applicationContext) }
+        } else {
+            toast(getString(R.string.no_external))
+            Prefs.setExternal(this, false)
+            play(f)
+        }
+    }
+
+    /** Long press (or hold OK) on a video: choose the player. */
+    private fun menu(f: FileItem) {
+        if (f.kind != "video" && f.kind != "audio") return open(f)
+        if (blocked) return toast(getString(R.string.blocked))
+        val always = Prefs.external(this)
+        val items = arrayOf(
+            getString(R.string.play_here),
+            getString(R.string.play_external),
+            getString(if (always) R.string.always_here else R.string.always_external),
+        )
+        AlertDialog.Builder(this, R.style.AppDialog)
+            .setTitle(Fmt.title(f.name))
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> play(f)
+                    1 -> playExternal(f)
+                    2 -> {
+                        Prefs.setExternal(this, !always)
+                        toast(getString(if (always) R.string.now_here else R.string.now_external))
+                    }
+                }
+            }
+            .show()
     }
 
     private fun confirmLogout() {
