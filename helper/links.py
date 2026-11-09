@@ -47,7 +47,9 @@ def probe(url):
     """Return {title, duration, thumbnail, formats:[...]}: yt-dlp first, then the links in the page itself."""
     try:
         res = yt_probe(url)
-        if res["formats"] and res["formats"][0]["fid"] != "best":
+        # a site yt-dlp really knows: use it. Its "generic" mode can pick a preview clip of the page,
+        # so for those the page's own player/download links are tried first.
+        if res["formats"] and res["formats"][0]["fid"] != "best" and res.get("extractor") != "Generic":
             return res
     except Exception as e:
         res, err = None, e
@@ -101,7 +103,8 @@ def yt_probe(url):
         out.append({"label": "فقط صدا", "height": 0, "size": _size(audio, duration), "fid": audio["format_id"], "audio": True})
     if not out and fmts:
         out.append({"label": "بهترین کیفیت", "height": 0, "size": _size(fmts[-1], duration), "fid": "best", "audio": False})
-    return {"title": info.get("title") or "video", "duration": duration, "thumbnail": info.get("thumbnail"), "formats": out}
+    return {"title": info.get("title") or "video", "duration": duration, "thumbnail": info.get("thumbnail"), "formats": out,
+            "extractor": info.get("extractor_key") or ""}
 
 
 def download(url, fmt, on_progress):
