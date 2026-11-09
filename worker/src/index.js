@@ -18,6 +18,7 @@ const VPS_ALIVE = 60_000;             // the VPS counts as online if it asked fo
 const VPS_DOWN_ALERT = 3 * 60_000;    // tell the owner when the VPS has been silent this long
 const LEASE = 3 * 60_000;             // a helper must show progress this often or the job is handed on
 const HANDOFF = 90_000;               // unclaimed jobs go to GitHub after this long
+const BUSY_ST = `('queued','uploading','waiting_helper','helper_uploading','waiting_space')`; // a user's file being saved
 const HELPER_ST = `('waiting_helper','helper_uploading','link_probe','link_download')`;
 const PAGE = 8;
 const DAY = 864e5;
@@ -415,6 +416,7 @@ export class Store extends DurableObject {
       await this.s3del(f.obj_key);
       await this.s3del(f.thumb_key);
       await this.writeManifest(f.owner);
+      await this.promoteTurn(f.owner);
     }
   }
 
@@ -1545,15 +1547,10 @@ export class Store extends DurableObject {
     }
     const id = randomId();
     const owner = this.isAdmin(user.id);
-    // Users save one file at a time (the owner has no limit). Checked right before the insert, with no
-    // await in between, so two files arriving together can't both slip through.
-    const busy = !owner && this.one(`SELECT id,name FROM files WHERE owner=? AND status IN
-      ('queued','uploading','waiting_helper','helper_uploading','waiting_space') ORDER BY created_at LIMIT 1`, user.id);
-    if (busy) {
-      return this.send(m.chat.id, `⏳ فایل قبلی شما (<b>${esc(short(busy.name, 40))}</b>) هنوز در حال ذخیره است.\nهر بار یک فایل ذخیره می‌شود؛ وقتی تمام شد، این فایل را دوباره بفرستید.`,
-        [[{ text: '❌ لغو فایل قبلی', callback_data: `c:${busy.id}` }]], m.message_id);
-    }
-    const status = owner ? 'store_pending' : media.size > this.freeFor(user) ? 'waiting_space' : media.size > TG_BOT_MAX ? 'waiting_helper' : 'queued';
+    // Users' files are saved one at a time: while one is being saved, the next ones wait their turn.
+    // (Decided right before the insert, with no await in between, so files arriving together queue up.)
+    const waiting = !owner && (this.userBusy(user.id) || this.one(`SELECT 1 AS x FROM files WHERE owner=? AND status='turn_wait' LIMIT 1`, user.id));
+    const status = owner ? 'store_pending' : waiting ? 'turn_wait' : this.saveStatus(user, media.size);
     this.sql.exec(`INSERT INTO files(id,name,mime,size,kind,status,tg_file_id,thumb_file_id,width,height,duration,chat_id,created_at,owner,storage)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'arvan')`,
       id, media.name, media.mime, media.size, media.kind, status, media.fileId, media.thumbId,
@@ -1567,11 +1564,33 @@ export class Store extends DurableObject {
     await this.afterStatus(id);
   }
 
+  // ---- users' files are saved one at a time: extra files wait their turn ('turn_wait'); the owner has no queue.
+  userBusy(uid) {
+    return this.one(`SELECT id FROM files WHERE owner=? AND status IN ${BUSY_ST} LIMIT 1`, uid);
+  }
+
+  saveStatus(u, size) {
+    return size > this.freeFor(u) ? 'waiting_space' : size > TG_BOT_MAX ? 'waiting_helper' : 'queued';
+  }
+
+  // Start the user's next waiting file once nothing of theirs is being saved.
+  async promoteTurn(uid) {
+    if (!uid || this.isAdmin(uid) || this.userBusy(uid)) return;
+    const next = this.one(`SELECT id,size FROM files WHERE owner=? AND status='turn_wait' ORDER BY created_at LIMIT 1`, uid);
+    if (!next) return;
+    this.sql.exec('UPDATE files SET status=? WHERE id=?', this.saveStatus(this.user(uid), next.size), next.id);
+    await this.afterStatus(next.id);
+  }
+
   async afterStatus(id) {
     const f = this.one('SELECT * FROM files WHERE id=?', id);
     if (!f) return;
     const title = `<b>${esc(f.name)}</b> (${fmtSize(f.size)})`;
-    if (f.status === 'queued') {
+    if (f.status === 'turn_wait') {
+      const ahead = this.one(`SELECT COUNT(*) AS c FROM files WHERE owner=? AND status='turn_wait' AND created_at < ?`, f.owner, f.created_at).c;
+      await this.edit(f.chat_id, f.msg_id, `🕓 ${title}\nدر نوبت${ahead ? ` (${faNum(ahead)} فایل جلوتر)` : ''}: بعد از فایل قبلی شما خودکار ذخیره می‌شود.`,
+        [[{ text: '❌ لغو', callback_data: `c:${id}` }]]);
+    } else if (f.status === 'queued') {
       await this.edit(f.chat_id, f.msg_id, `⏳ ${title}\nدر حال ذخیره…`);
       await this.ctx.storage.setAlarm(Date.now() + 50);
     } else if (f.status === 'waiting_helper') {
@@ -1768,7 +1787,7 @@ export class Store extends DurableObject {
       case 'r': {
         const p = this.one(`SELECT * FROM files WHERE id=? AND status='failed'`, a);
         if (p && this.canTouch(user.id, a)) {
-          const st = p.size > this.freeFor(this.user(p.owner)) ? 'waiting_space' : p.size > TG_BOT_MAX ? 'waiting_helper' : 'queued';
+          const st = !this.isAdmin(p.owner) && this.userBusy(p.owner) ? 'turn_wait' : this.saveStatus(this.user(p.owner), p.size);
           this.sql.exec('UPDATE files SET status=?, error=NULL WHERE id=?', st, a);
           await this.afterStatus(a);
         }
@@ -2249,6 +2268,7 @@ export class Store extends DurableObject {
     } catch (e) {
       console.log('upload failed', f.id, e.stack || e);
       this.sql.exec(`UPDATE files SET status='failed', error=? WHERE id=?`, String(e.message || e), f.id);
+      await this.promoteTurn(f.owner);
       await this.edit(f.chat_id, f.msg_id, `❌ ذخیره <b>${esc(f.name)}</b> ناموفق بود:\n<code>${esc(e.message || e)}</code>`,
         [[{ text: '🔁 دوباره', callback_data: `r:${f.id}` }, { text: '❌ لغو', callback_data: `c:${f.id}` }]]);
     }
@@ -2263,6 +2283,7 @@ export class Store extends DurableObject {
     // The file is safe on Arvan now: remove the user's original message from the chat (bots may delete
     // incoming messages in private chats for 48 hours).
     if (f.src_msg_id) await this.tg('deleteMessage', { chat_id: f.chat_id, message_id: f.src_msg_id });
+    await this.promoteTurn(f.owner);
     const hasTv = this.one('SELECT 1 AS x FROM devices WHERE user_id=?', f.owner);
     await this.edit(f.chat_id, f.msg_id,
       `✅ <b>${esc(f.name)}</b> (${fmtSize(size)}) ذخیره شد${hasTv ? ' و روی تلویزیون نمایش داده می‌شود.' : '.\n📺 برای دیدن روی تلویزیون، تلویزیون را وصل کنید.'}${/\.(srt|vtt|ass|ssa)$/i.test(f.name) ? '\n\n📝 این فایل زیرنویس است و جدا نمایش داده نمی‌شود: موقع پخش ویدیو از دکمه زیرنویس (CC) انتخابش کنید. اگر اسمش با اسم ویدیو یکی باشد (مثل movie.mp4 و movie.srt)، خودکار روشن می‌شود.' : ''}\n\n${this.usageLine(f.owner)}`,
@@ -2494,6 +2515,7 @@ export class Store extends DurableObject {
     if (kind === 'fail') {
       const why = (await req.text()).slice(0, 500) || 'helper error';
       this.sql.exec(`UPDATE files SET status='failed', error=? WHERE id=?`, why, id);
+      await this.promoteTurn(f.owner);
       if (f.source_url) {
         const blocked = /not a bot|sign in|login|logged-in|cookies/i.test(why);
         await this.edit(f.chat_id, f.msg_id, blocked
