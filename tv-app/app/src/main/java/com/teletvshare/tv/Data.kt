@@ -26,10 +26,14 @@ data class FileItem(
     val duration: Int, val createdAt: Long, val url: String, val thumb: String?,
 )
 
+/** One of the owner's storages, for the usage chart (cap null = unlimited). */
+data class Store(val key: String, val used: Long, val cap: Long?)
+
 data class Manifest(
     val userName: String, val plan: String, val expiresAt: Long?,
     val used: Long, val quota: Long?, val blocked: Boolean, val reportUrl: String?,
     val files: List<FileItem>, val deleteUrl: String? = null,
+    val stores: List<Store> = emptyList(),
 )
 
 class UnlinkedException : RuntimeException("unlinked")
@@ -50,6 +54,8 @@ object Prefs {
     /** Files deleted on the TV that the server hasn't removed yet (hidden meanwhile). */
     fun pendingDeletes(ctx: Context): Set<String> = p(ctx).getStringSet("pending_del", emptySet())!!.toSet()
     fun setPendingDeletes(ctx: Context, ids: Set<String>) = p(ctx).edit().putStringSet("pending_del", ids).apply()
+    fun sort(ctx: Context) = p(ctx).getInt("sort", 0)
+    fun setSort(ctx: Context, s: Int) = p(ctx).edit().putInt("sort", s).apply()
     fun external(ctx: Context) = p(ctx).getBoolean("external", false)
     fun setExternal(ctx: Context, on: Boolean) = p(ctx).edit().putBoolean("external", on).apply()
 }
@@ -124,6 +130,12 @@ object Api {
             blocked = w?.optBoolean("blocked") ?: false,
             reportUrl = j.optString("report_url").takeIf { it.startsWith("http") },
             deleteUrl = j.optString("delete_url").takeIf { it.startsWith("http") },
+            stores = j.optJSONArray("stores")?.let { a ->
+                (0 until a.length()).map { i ->
+                    val s = a.getJSONObject(i)
+                    Store(s.optString("key"), s.optLong("used"), if (s.isNull("cap")) null else s.optLong("cap"))
+                }
+            } ?: emptyList(),
             files = (0 until arr.length()).map { i ->
                 val f = arr.getJSONObject(i)
                 FileItem(

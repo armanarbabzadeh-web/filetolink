@@ -33,6 +33,12 @@
             android:layout_height="1dp"
             android:layout_weight="1" />
 
+        <com.teletvshare.tv.UsageRing
+            android:id="@+id/usageRing"
+            android:layout_width="56dp"
+            android:layout_height="56dp"
+            android:layout_marginEnd="10dp" />
+
         <TextView
             android:id="@+id/userChip"
             android:layout_width="wrap_content"
@@ -46,6 +52,8 @@
             android:paddingStart="18dp"
             android:paddingEnd="22dp"
             android:singleLine="true"
+            android:focusable="true"
+            android:clickable="true"
             android:textColor="@color/text"
             android:textSize="17sp" />
 
@@ -74,6 +82,8 @@
         <TextView android:id="@+id/tabImage" style="@style/Chip" android:drawableStart="@drawable/ic_image" android:text="@string/tab_image" />
         <TextView android:id="@+id/tabAudio" style="@style/Chip" android:drawableStart="@drawable/ic_audio" android:text="@string/tab_audio" />
         <TextView android:id="@+id/tabFile" style="@style/Chip" android:drawableStart="@drawable/ic_file" android:text="@string/tab_file" />
+        <View android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
+        <TextView android:id="@+id/btnSort" style="@style/Chip" android:layout_marginEnd="0dp" android:drawableStart="@drawable/ic_sort" android:text="@string/sort_newest" />
     </LinearLayout>
 
     <TextView

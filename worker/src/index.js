@@ -1566,6 +1566,12 @@ export class Store extends DurableObject {
       user: { name: u.first_name || '', plan: lim.title, expires_at: u.plan !== 'free' ? u.expires_at : null },
       used: this.userUsed(uid),
       quota: Number.isFinite(lim.quota) ? lim.quota : null,
+      // the owner's three storages, for the usage chart on his TV
+      stores: this.isAdmin(uid) ? [
+        { key: 'arvan', used: this.userUsed(uid), cap: null },
+        { key: 'cf', used: Math.max(0, CF_CAP - this.cfFree()), cap: CF_CAP },
+        { key: 'vps', used: this.vpsUsed(), cap: VPS_CAP },
+      ] : undefined,
       watch: {
         month: monthKey(), used: mu.watch,
         cap: Number.isFinite(lim.watchCap) ? lim.watchCap : null,

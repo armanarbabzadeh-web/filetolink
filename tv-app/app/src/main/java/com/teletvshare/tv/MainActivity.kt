@@ -20,6 +20,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var grid: RecyclerView
     private lateinit var empty: View
     private lateinit var userChip: TextView
+    private lateinit var ring: UsageRing
+    private lateinit var sortBtn: TextView
+    private var lastManifest: Manifest? = null
     private lateinit var warn: View
     private lateinit var adapter: FileAdapter
     private lateinit var tabs: List<Pair<TextView, String?>>
@@ -40,6 +43,11 @@ class MainActivity : AppCompatActivity() {
         grid = findViewById(R.id.grid)
         empty = findViewById(R.id.empty)
         userChip = findViewById(R.id.userChip)
+        ring = findViewById(R.id.usageRing)
+        sortBtn = findViewById(R.id.btnSort)
+        sortBtn.text = getString(SORTS[Prefs.sort(this).coerceIn(0, SORTS.size - 1)])
+        sortBtn.setOnClickListener { chooseSort() }
+        userChip.setOnClickListener { showUsage() }
         warn = findViewById(R.id.warn)
         findViewById<TextView>(R.id.emptyBody).text = getString(R.string.empty_body, BuildConfig.BOT_USERNAME)
 
@@ -88,7 +96,76 @@ class MainActivity : AppCompatActivity() {
     // subtitle files are not shown on their own: they appear as subtitle tracks of the videos
     private fun visible(): List<FileItem> {
         val gone = Prefs.pendingDeletes(this)
-        return all.filter { it.id !in gone && !Subs.isSub(it) && (filter == null || it.kind == filter) }
+        val list = all.filter { it.id !in gone && !Subs.isSub(it) && (filter == null || it.kind == filter) }
+        val byName = java.text.Collator.getInstance(java.util.Locale("fa"))
+        return when (Prefs.sort(this)) {
+            1 -> list.sortedBy { it.createdAt }
+            2 -> list.sortedWith { a, b -> byName.compare(Fmt.title(a.name), Fmt.title(b.name)) }
+            3 -> list.sortedWith { a, b -> byName.compare(Fmt.title(b.name), Fmt.title(a.name)) }
+            4 -> list.sortedByDescending { it.size }
+            5 -> list.sortedBy { it.size }
+            6 -> list.sortedByDescending { it.duration }
+            else -> list.sortedByDescending { it.createdAt }
+        }
+    }
+
+    private fun chooseSort() {
+        val cur = Prefs.sort(this).coerceIn(0, SORTS.size - 1)
+        AlertDialog.Builder(this, R.style.AppDialog)
+            .setTitle(R.string.sort_title)
+            .setSingleChoiceItems(SORTS.map { getString(it) }.toTypedArray(), cur) { d, which ->
+                Prefs.setSort(this, which)
+                sortBtn.text = getString(SORTS[which])
+                render(focusFirst = true)
+                d.dismiss()
+            }
+            .show()
+    }
+
+    /** Usage details: one bar per storage (the owner has three), or the plan's space for users. */
+    private fun showUsage() {
+        val m = lastManifest ?: return
+        val box = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            val p = (24 * resources.displayMetrics.density).toInt()
+            setPadding(p, p / 2, p, 0)
+        }
+        val rows = if (m.stores.isNotEmpty()) m.stores else listOf(Store("plan", m.used, m.quota))
+        for (s in rows) {
+            val name = getString(when (s.key) { "cf" -> R.string.store_cf; "vps" -> R.string.store_vps; "arvan" -> R.string.store_arvan; else -> R.string.store_plan })
+            val txt = android.widget.TextView(this).apply {
+                textSize = 18f
+                setTextColor(0xFFFFFFFF.toInt())
+                text = if (s.cap != null && s.cap > 0) {
+                    val pct = (s.used * 100 / s.cap).toInt()
+                    "$name: ${Fmt.faSize(s.used)} از ${Fmt.faSize(s.cap)} (${Fmt.fa(pct.toString())}٪) — آزاد: ${Fmt.faSize(maxOf(0, s.cap - s.used))}"
+                } else "$name: ${Fmt.faSize(s.used)} — ${getString(R.string.unlimited)}"
+                setPadding(0, (14 * resources.displayMetrics.density).toInt(), 0, (6 * resources.displayMetrics.density).toInt())
+            }
+            val bar = android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+                max = 1000
+                progress = if (s.cap != null && s.cap > 0) (s.used * 1000 / s.cap).toInt().coerceIn(0, 1000) else 1000
+                val f = progress / 1000f
+                val col = if (s.cap == null) 0xFF8B5CF6.toInt() else if (f >= 0.9f) 0xFFEF4444.toInt() else if (f >= 0.7f) 0xFFFFB547.toInt() else 0xFF22C55E.toInt()
+                progressTintList = android.content.res.ColorStateList.valueOf(col)
+                progressBackgroundTintList = android.content.res.ColorStateList.valueOf(0x33FFFFFF)
+                minimumHeight = (10 * resources.displayMetrics.density).toInt()
+            }
+            box.addView(txt)
+            box.addView(bar, android.widget.LinearLayout.LayoutParams(android.widget.LinearLayout.LayoutParams.MATCH_PARENT, (10 * resources.displayMetrics.density).toInt()))
+        }
+        AlertDialog.Builder(this, R.style.AppDialog)
+            .setTitle(R.string.usage_title)
+            .setView(box)
+            .setPositiveButton(android.R.string.ok, null)
+            .show()
+    }
+
+    companion object {
+        private val SORTS = intArrayOf(
+            R.string.sort_newest, R.string.sort_oldest, R.string.sort_name_az, R.string.sort_name_za,
+            R.string.sort_big, R.string.sort_small, R.string.sort_long,
+        )
     }
 
     private fun render(focusFirst: Boolean) {
@@ -113,6 +190,8 @@ class MainActivity : AppCompatActivity() {
             }
             blocked = m.blocked
             warn.visibility = if (blocked) View.VISIBLE else View.GONE
+            lastManifest = m
+            ring.fraction = if (m.quota != null && m.quota > 0) m.used.toFloat() / m.quota else if (m.stores.isNotEmpty()) null else 0f
             val quota = m.quota?.let { "‏ از ‏${Fmt.faSize(it)}" } ?: ""
             // isolate the (possibly Latin) name so it doesn't reorder the Persian text around it
             userChip.text = "‏${Fmt.faSize(m.used)}$quota‏   •   ⁨${m.userName}⁩"
