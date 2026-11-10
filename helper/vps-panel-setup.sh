@@ -9,7 +9,7 @@
 #  - adds ONE route to Caddy: /panel and /panel/* go to 127.0.0.1:8091. No port or firewall change.
 #  - on first start, temporary login details are sent to the owner through the admin bot
 # New login details later: send /panel to the admin bot.
-# Undo: systemctl disable --now teletvshare-panel; restore /etc/caddy/Caddyfile.bak-panel; systemctl reload caddy
+# Undo: systemctl disable --now teletvshare-panel; restore /etc/caddy/Caddyfile.bak-panel; systemctl restart caddy
 set -e
 ENVF=/etc/teletvshare/panel.env
 APP=/opt/teletvshare
@@ -68,7 +68,7 @@ fi
 systemctl daemon-reload
 systemctl enable teletvshare-panel >/dev/null 2>&1
 systemctl restart teletvshare-panel
-systemctl reload caddy
+systemctl restart caddy  # Caddy runs with "admin off", so it cannot be reloaded
 sleep 3
 echo "panel: $(systemctl is-active teletvshare-panel)  caddy: $(systemctl is-active caddy)  helper: $(systemctl is-active teletvshare-helper)  x-ui: $(systemctl is-active x-ui)"
 echo "page: $(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "https://$DOMAIN/panel")  api without login (should be 401): $(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "https://$DOMAIN/panel/api/users")"
