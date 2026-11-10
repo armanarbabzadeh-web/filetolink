@@ -368,27 +368,73 @@ def vps_sig(jid, exp):
     return hmac.new(os.environ["HELPER_SECRET"].encode(), f"{jid}:{exp}".encode(), hashlib.sha256).hexdigest()[:32]
 
 
+def link_sig(kind, jid):
+    """Permanent link signature (like the unguessable Arvan links); kind: v = VPS file, c = Cloudflare file, t = thumbnail."""
+    import hmac
+    return hmac.new(os.environ["HELPER_SECRET"].encode(), f"{kind}:{jid}".encode(), hashlib.sha256).hexdigest()[:32]
+
+
 async def start_file_server():
-    from aiohttp import web
+    """Owner's files for the TV, on 127.0.0.1 (Caddy puts it on the owner's own domain over HTTPS).
+    /v/<id>/<name>  file on this VPS          /c/<id>/<name>  owner's Cloudflare file, relayed
+    /t/<id>         thumbnail, relayed        every link carries a signature made by the Worker."""
+    from aiohttp import web, ClientTimeout as _CT
     import hmac as _hmac
     import mimetypes as _mt
 
+    def ok(req, kind, jid):
+        sig = req.query.get("sig", "")
+        if "exp" in req.query:  # older expiring links
+            try:
+                exp = int(req.query["exp"])
+            except ValueError:
+                return False
+            return kind == "v" and exp >= time.time() and _hmac.compare_digest(sig, vps_sig(jid, exp))
+        return _hmac.compare_digest(sig, link_sig(kind, jid))
+
     async def get_file(req):
         jid, name = req.match_info["id"], req.match_info["name"]
-        try:
-            exp = int(req.query.get("exp", "0"))
-        except ValueError:
-            exp = 0
-        if exp < time.time() or not _hmac.compare_digest(req.query.get("sig", ""), vps_sig(jid, exp)):
-            return web.Response(status=403, text="link expired")
+        if not (jid.isalnum() and ok(req, "v", jid)):
+            return web.Response(status=403, text="bad link")
         path = vps_path(jid)
-        if not (jid.isalnum() and os.path.isfile(path)):
+        if not os.path.isfile(path):
             return web.Response(status=404, text="not found")
         ctype = _mt.guess_type(name)[0] or "application/octet-stream"
         return web.FileResponse(path, headers={"Content-Type": ctype, "Cache-Control": "private, max-age=3600"})
 
+    async def relay(req, url):
+        headers = {"User-Agent": "TeleTVShareRelay/1.0"}
+        if req.headers.get("Range"):
+            headers["Range"] = req.headers["Range"]
+        async with http.request(req.method, url, headers=headers, allow_redirects=True,
+                                timeout=_CT(total=None, sock_connect=20, sock_read=120)) as up:
+            out = web.StreamResponse(status=up.status)
+            for h in ("Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "Cache-Control"):
+                if up.headers.get(h):
+                    out.headers[h] = up.headers[h]
+            await out.prepare(req)
+            if req.method != "HEAD":
+                async for chunk in up.content.iter_chunked(256 * 1024):
+                    await out.write(chunk)
+            await out.write_eof()
+            return out
+
+    async def get_cf(req):
+        jid, name = req.match_info["id"], req.match_info["name"]
+        if not (jid.isalnum() and ok(req, "c", jid)):
+            return web.Response(status=403, text="bad link")
+        return await relay(req, f"{WORKER_URL}/f/{jid}/{name}")
+
+    async def get_thumb(req):
+        jid = req.match_info["id"]
+        if not (jid.isalnum() and ok(req, "t", jid)):
+            return web.Response(status=403, text="bad link")
+        return await relay(req, f"{WORKER_URL}/t/{jid}")
+
     app = web.Application()
-    app.router.add_route("GET", "/v/{id}/{name}", get_file)
+    app.router.add_get("/v/{id}/{name}", get_file)
+    app.router.add_get("/c/{id}/{name}", get_cf)
+    app.router.add_get("/t/{id}", get_thumb)
     runner = web.AppRunner(app, access_log=None)
     await runner.setup()
     await web.TCPSite(runner, "127.0.0.1", FILE_PORT).start()

@@ -1302,7 +1302,17 @@ export class Store extends DurableObject {
     return [...mac].map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 32);
   }
 
+  // Permanent link signatures for the owner's own domain (kind: v = VPS file, c = Cloudflare file, t = thumbnail).
+  async linkSig(kind, id) { return this.vpsSig(kind, id); }
+  ownDomain() { return /^https:\/\/[a-z0-9.-]+$/i.test(this.env.VPS_PUBLIC || '') ? this.env.VPS_PUBLIC : null; }
+  async ownLink(f, kind) {
+    const name = encodeURIComponent(cleanName(f.name));
+    const path = kind === 't' ? `/t/${f.id}` : `/${kind}/${f.id}/${name}`;
+    return `${this.ownDomain()}${path}?sig=${await this.linkSig(kind, f.id)}`;
+  }
+
   async serveVps(f) {
+    if (this.ownDomain()) return Response.redirect(await this.ownLink(f, 'v'), 302);
     const host = this.meta('vps_tunnel');
     if (!host || !this.vpsAlive()) return new Response('VPS is offline', { status: 503, headers: { 'retry-after': '60' } });
     const exp = Math.floor(Date.now() / 1000) + 6 * 3600;
@@ -1342,7 +1352,7 @@ export class Store extends DurableObject {
     if (cf && f.size > this.cfFree()) return answer(`فضای Cloudflare کافی نیست (آزاد: ${fmtSize(this.cfFree())}).`, true);
     if (vps && f.size > this.vpsFree()) return answer(`فضای VPS کافی نیست (آزاد: ${fmtSize(this.vpsFree())}).`, true);
     if (vps && !this.vpsAlive()) return answer('VPS الان در دسترس نیست. Cloudflare یا آروان را انتخاب کنید.', true);
-    if (vps && !this.meta('vps_tunnel')) return answer('فضای VPS هنوز راه‌اندازی نشده (تونل روی سرور نصب نیست). Cloudflare یا آروان را انتخاب کنید.', true);
+    if (vps && !this.ownDomain() && !this.meta('vps_tunnel')) return answer('فضای VPS هنوز راه‌اندازی نشده (تونل روی سرور نصب نیست). Cloudflare یا آروان را انتخاب کنید.', true);
     if (f.source_url) {
       this.sql.exec(`UPDATE files SET status='link_probe', storage=? WHERE id=?`, storage, id);
       await this.edit(f.chat_id, f.msg_id, `🔎 در حال بررسی لینک… (${label})\nکیفیت‌های موجود تا حدود یک دقیقه دیگر نمایش داده می‌شود.`, [[{ text: '❌ لغو', callback_data: `c:${id}` }]]);
@@ -1563,13 +1573,23 @@ export class Store extends DurableObject {
       },
       report_url: await this.presignPut(`r/${d.token}.json`),
       delete_url: await this.presignPut(`d/${d.token}.json`),
-      files: files.map((f) => ({
+      files: [],
+    };
+    // The owner's Cloudflare and VPS files go through the owner's own domain on the VPS (not filtered in
+    // Iran, so no VPN needed); without that domain they use the Worker address.
+    const own = this.isAdmin(uid) && this.ownDomain();
+    for (const f of files) {
+      const mine = f.storage === 'cf' || f.storage === 'vps';
+      manifest.files.push({
         id: f.id, name: f.name, mime: f.mime, size: f.size, kind: f.kind,
         width: f.width, height: f.height, duration: f.duration, created_at: f.created_at,
-        url: f.storage === 'remote' ? f.source_url : f.storage === 'cf' || f.storage === 'vps' ? this.cfUrl(f) : this.publicUrl(f.obj_key),
-        thumb: f.storage === 'cf' || f.storage === 'vps' ? (f.has_thumb ? `${this.env.PUBLIC_URL}/t/${f.id}` : null) : f.thumb_key ? this.publicUrl(f.thumb_key) : null,
-      })),
-    };
+        url: f.storage === 'remote' ? f.source_url
+          : mine ? (own ? await this.ownLink(f, f.storage === 'vps' ? 'v' : 'c') : this.cfUrl(f))
+          : this.publicUrl(f.obj_key),
+        thumb: mine ? (f.has_thumb ? (own ? await this.ownLink(f, 't') : `${this.env.PUBLIC_URL}/t/${f.id}`) : null)
+          : f.thumb_key ? this.publicUrl(f.thumb_key) : null,
+      });
+    }
     await this.putJson(`m/${d.token}.json`, manifest);
     this.sql.exec('UPDATE devices SET manifest_at=? WHERE token=?', Date.now(), d.token);
   }
