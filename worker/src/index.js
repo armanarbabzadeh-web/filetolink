@@ -2363,6 +2363,14 @@ export class Store extends DurableObject {
     }
     if (this.budget() > 8) await this.processQueue();
     try { if (this.budget() > 4) await this.helperWatch(); } catch (e) { console.log('helper watch failed', e.stack || e); }
+    try {
+      // the owner's own domain was set or changed: rewrite his TV list right away
+      const dom = this.ownDomain() || '';
+      if ((this.meta('own_domain') || '') !== dom && this.budget() > 6) {
+        await this.writeManifest(Number(this.env.OWNER_ID));
+        this.meta('own_domain', dom);
+      }
+    } catch (e) { console.log('own domain refresh failed', e.stack || e); }
     try { if (this.budget() > 14 && this.one('SELECT 1 AS x FROM devices LIMIT 1')) await this.tvDeletes(); } catch (e) { console.log('tv deletes failed', e.stack || e); }
     const queued = this.one(`SELECT 1 AS x FROM files WHERE status='queued' LIMIT 1`);
     const helperWait = this.one(`SELECT 1 AS x FROM files WHERE status IN ${HELPER_ST} LIMIT 1`);
