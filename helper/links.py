@@ -198,6 +198,8 @@ def page_probe(url):
             size, ok = _check(op, link, url)
         except Exception:
             continue
+        if ok and size and any(f["size"] == size for f in formats):
+            continue  # the same file offered twice (player + download button)
         if ok:
             formats.append({"label": (label or "MP4")[:40], "height": 0, "size": size, "fid": "direct", "audio": False,
                             "direct": link, "referer": url, "cookie": _cookie_header(jar)})
