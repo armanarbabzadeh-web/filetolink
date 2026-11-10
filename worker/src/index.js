@@ -9,6 +9,7 @@
 // * Bookkeeping lives in one SQLite-backed Durable Object ("Store").
 import { DurableObject } from 'cloudflare:workers';
 import { AwsClient } from 'aws4fetch';
+import { panel, panelCredentials } from './panel.js';
 
 const CHUNK = 1_900_000;              // in-DO storage chunk (owner's Cloudflare storage)
 const VPS_CAP = 5 * 1024 ** 3;          // owner's storage on the VPS disk
@@ -495,6 +496,7 @@ export class Store extends DurableObject {
       if ((m = /^\/f\/([A-Za-z0-9]{16})(?:\/.*)?$/.exec(p))) return this.serveFile(req, m[1]);
       if ((m = /^\/t\/([A-Za-z0-9]{16})$/.exec(p))) return this.serveThumb(m[1]);
       if (p.startsWith('/api/')) return this.api(req, url, p);
+      if (p === '/panel' || p.startsWith('/panel/')) return panel(this, req, url, p);
       if (p.startsWith('/helper/')) {
         if (p === '/helper/jobs') return this.helperJobs(req);
         if ((m = /^\/helper\/claim\/([A-Za-z0-9]{16})$/.exec(p)) && req.method === 'POST') return this.helperClaim(req, m[1]);
@@ -1950,6 +1952,7 @@ export class Store extends DurableObject {
     const A = (t, kb) => this.send(chat, t, kb, null, 'admin');
 
     if (name === 'start' || name === 'menu' || name === 'stats' || name === 'admin') return A(this.adminStats(), this.adminMenu());
+    if (name === 'panel') return panelCredentials(this, chat);
     if (name === 'users') { const v = this.adminUsersView(0); return A(v.text, v.kb); }
     if (name === 'user') {
       const id = Number(arg.replace('@', '')) || this.one('SELECT id FROM users WHERE username=?', arg.replace('@', ''))?.id;
@@ -2000,6 +2003,7 @@ export class Store extends DurableObject {
       '/stats — آمار', '/users — کاربران', '/user شناسه یا @username — مدیریت کاربر',
       '/payments — رسیدها', '/gift — ساخت کد هدیه (مرحله‌به‌مرحله)', '/gifts — کدها', '/delgift کد — حذف کد',
       '/settings — شماره کارت، قیمت‌ها و سقف‌ها',
+      '/panel — نام کاربری و رمز موقت پنل وب (رمز قبلی و نشست‌ها باطل می‌شوند)',
     ].join('\n');
   }
 
@@ -2229,29 +2233,11 @@ export class Store extends DurableObject {
     if (op === 'U') { const v = this.adminUsersView(Number(a) || 0); await E(v.text, v.kb); return answer(); }
     if (op === 'uv') { const v = this.adminUserView(Number(a)); await A(v.text, v.kb); return answer(); }
     if (op === 'u') {
-      const target = this.user(Number(a));
-      if (!target) return answer('کاربر پیدا نشد');
-      let note = '';
-      if (b === 'ext') {
-        if (target.plan === 'free') return answer('کاربر پلن رایگان دارد؛ یک پلن انتخاب کنید', true);
-        this.activatePlan(target.id, target.plan, 30); note = 'تمدید شد';
-      } else if (PLANS[b]) {
-        if (b === 'free') this.sql.exec(`UPDATE users SET plan='free', expires_at=NULL, grace_until=NULL WHERE id=?`, target.id);
-        else this.sql.exec('UPDATE users SET plan=?, expires_at=?, grace_until=NULL, reminded=0 WHERE id=?', b, Date.now() + 30 * DAY, target.id);
-        note = 'پلن تغییر کرد';
-        await this.send(target.id, `ℹ️ اشتراک شما توسط پشتیبانی به‌روز شد.\n\n${this.accountText(this.user(target.id))}`, this.menuKeyboard());
-      } else if (b === 'ban' || b === 'unban') {
-        this.sql.exec('UPDATE users SET banned=? WHERE id=?', b === 'ban' ? 1 : 0, target.id);
-        note = b === 'ban' ? 'مسدود شد' : 'آزاد شد';
-      } else if (b === 'tvoff') {
-        const d = this.one('SELECT * FROM devices WHERE user_id=?', target.id);
-        if (d) await this.removeDevice(d);
-        note = 'تلویزیون قطع شد';
-      }
-      await this.writeManifest(target.id);
-      const v = this.adminUserView(target.id);
+      const r = await this.adminUserAction(Number(a), b);
+      if (!r.ok) return answer(r.error, r.alert);
+      const v = this.adminUserView(Number(a));
       await E(v.text, v.kb);
-      return answer(note);
+      return answer(r.note);
     }
     return answer();
   }
@@ -2309,6 +2295,32 @@ export class Store extends DurableObject {
       `🧾 رسیدهای در انتظار: ${faNum(pending)}`,
       this.meta('vps_seen') ? `🖥 VPS: ${this.vpsAlive() ? '🟢 آنلاین' : '🔴 قطع — کارها با GitHub انجام می‌شود'}` : '🖥 VPS: هنوز وصل نشده',
     ].join('\n');
+  }
+
+  // One admin action on a user, shared by the admin bot and the web panel.
+  // action: 'ext' | a PLANS key | 'ban' | 'unban' | 'tvoff'. Returns { ok, note } or { ok: false, error, alert }.
+  async adminUserAction(uid, action) {
+    const target = this.user(uid);
+    if (!target) return { ok: false, error: 'کاربر پیدا نشد' };
+    let note = '';
+    if (action === 'ext') {
+      if (target.plan === 'free') return { ok: false, error: 'کاربر پلن رایگان دارد؛ یک پلن انتخاب کنید', alert: true };
+      this.activatePlan(target.id, target.plan, 30); note = 'تمدید شد';
+    } else if (PLANS[action]) {
+      if (action === 'free') this.sql.exec(`UPDATE users SET plan='free', expires_at=NULL, grace_until=NULL WHERE id=?`, target.id);
+      else this.sql.exec('UPDATE users SET plan=?, expires_at=?, grace_until=NULL, reminded=0 WHERE id=?', action, Date.now() + 30 * DAY, target.id);
+      note = 'پلن تغییر کرد';
+      await this.send(target.id, `ℹ️ اشتراک شما توسط پشتیبانی به‌روز شد.\n\n${this.accountText(this.user(target.id))}`, this.menuKeyboard());
+    } else if (action === 'ban' || action === 'unban') {
+      this.sql.exec('UPDATE users SET banned=? WHERE id=?', action === 'ban' ? 1 : 0, target.id);
+      note = action === 'ban' ? 'مسدود شد' : 'آزاد شد';
+    } else if (action === 'tvoff') {
+      const d = this.one('SELECT * FROM devices WHERE user_id=?', target.id);
+      if (d) await this.removeDevice(d);
+      note = 'تلویزیون قطع شد';
+    } else return { ok: false, error: 'عملیات نامعتبر' };
+    await this.writeManifest(target.id);
+    return { ok: true, note };
   }
 
   adminUsersView(page) {
@@ -2712,6 +2724,7 @@ export default {
     }
     if (/^\/[ft]\//.test(p) && (req.method === 'GET' || req.method === 'HEAD')) return fwd(p);
     if (p.startsWith('/api/')) return fwd(p);
+    if (p === '/panel' || p.startsWith('/panel/')) return fwd(p);
     if (p.startsWith('/helper/')) {
       const h = req.headers.get('authorization') || '';
       if (!env.HELPER_SECRET || !timingSafeEqual(h.replace(/^Bearer /, ''), env.HELPER_SECRET)) return new Response('unauthorized', { status: 401 });

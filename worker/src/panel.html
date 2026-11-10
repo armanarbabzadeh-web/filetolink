@@ -1,0 +1,533 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>پنل کاربران</title>
+<style nonce="__NONCE__">
+:root {
+  --bg: #f4f5f7; --card: #fff; --text: #1d2330; --muted: #6b7385; --line: #e3e6ec;
+  --accent: #2f6fed; --accent-soft: #e8efff; --ok: #1a8a4a; --ok-soft: #e4f5ea;
+  --bad: #c9302c; --bad-soft: #fdeceb; --warn: #a86400; --warn-soft: #fff4e0;
+  --on-accent: #fff; --radius: 12px; --shadow: 0 1px 2px rgba(20,30,50,.06), 0 2px 8px rgba(20,30,50,.05);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12151b; --card: #1b1f27; --text: #e7eaf0; --muted: #98a0b3; --line: #2b313d;
+    --accent: #6d9bff; --accent-soft: #1f2a44; --ok: #4cc27c; --ok-soft: #173325;
+    --bad: #ff7b74; --bad-soft: #3a1d1d; --warn: #f1b453; --warn-soft: #3a2c14;
+    --shadow: none; --on-accent: #0b1220;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg); color: var(--text);
+  font: 15px/1.6 Vazirmatn, "Segoe UI", Tahoma, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+button, input, select { font: inherit; color: inherit; }
+.hidden { display: none !important; }
+.wrap { max-width: 1180px; margin: 0 auto; padding: 16px; }
+header.bar {
+  position: sticky; top: 0; z-index: 5; background: var(--card); border-bottom: 1px solid var(--line);
+}
+header.bar .wrap { display: flex; align-items: center; gap: 12px; padding-top: 10px; padding-bottom: 10px; }
+header.bar h1 { font-size: 17px; margin: 0; flex: 1; }
+header.bar .who { color: var(--muted); font-size: 13px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+.pad { padding: 16px; }
+.btn {
+  border: 1px solid var(--line); background: var(--card); border-radius: 9px; padding: 7px 14px;
+  cursor: pointer; white-space: nowrap; transition: background .15s, border-color .15s;
+}
+.btn:hover { border-color: var(--accent); }
+.btn:disabled { opacity: .55; cursor: default; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.btn.danger { color: var(--bad); }
+.btn.danger:hover { border-color: var(--bad); background: var(--bad-soft); }
+.btn.small { padding: 3px 10px; font-size: 13px; }
+.btn.ghost { border-color: transparent; background: transparent; }
+
+/* auth */
+.auth { max-width: 380px; margin: 9vh auto 0; }
+.auth h2 { margin: 0 0 4px; font-size: 20px; }
+.auth p { margin: 0 0 16px; color: var(--muted); font-size: 14px; }
+label.f { display: block; margin-bottom: 12px; font-size: 14px; }
+label.f span { display: block; margin-bottom: 4px; color: var(--muted); }
+input.in, select.in {
+  width: 100%; padding: 9px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--bg);
+  outline: none;
+}
+input.in:focus, select.in:focus { border-color: var(--accent); }
+input.ltr { direction: ltr; text-align: left; }
+.msg { min-height: 22px; font-size: 14px; color: var(--bad); margin: 4px 0 10px; }
+.auth .btn.primary { width: 100%; padding: 10px; }
+
+/* list */
+.tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+.tools .search { flex: 1 1 240px; }
+.tools select.in { width: auto; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+.chip { border: 1px solid var(--line); background: var(--card); border-radius: 999px; padding: 3px 12px; font-size: 13px; cursor: pointer; }
+.chip.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.count { color: var(--muted); font-size: 13px; margin: 0 4px 8px; }
+table.users { width: 100%; border-collapse: collapse; }
+table.users th, table.users td { padding: 10px 12px; text-align: right; border-bottom: 1px solid var(--line); vertical-align: middle; }
+table.users th { font-size: 12.5px; color: var(--muted); font-weight: 600; cursor: pointer; user-select: none; white-space: nowrap; }
+table.users th.sorted::after { content: " ▾"; }
+table.users th.sorted.asc::after { content: " ▴"; }
+table.users tbody tr { cursor: pointer; }
+table.users tbody tr:hover { background: var(--accent-soft); }
+table.users tr:last-child td { border-bottom: none; }
+.name { font-weight: 600; }
+.sub { color: var(--muted); font-size: 12.5px; }
+.ltrnum { direction: ltr; unicode-bidi: embed; }
+.badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; background: var(--bg); border: 1px solid var(--line); white-space: nowrap; }
+.badge.ok { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+.badge.bad { background: var(--bad-soft); color: var(--bad); border-color: transparent; }
+.badge.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+.badge.acc { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+.meter { height: 6px; background: var(--bg); border-radius: 4px; overflow: hidden; margin-top: 4px; min-width: 80px; }
+.meter > i { display: block; height: 100%; background: var(--accent); border-radius: 4px; }
+.meter.full > i { background: var(--bad); }
+.empty { text-align: center; color: var(--muted); padding: 40px 0; }
+
+@media (max-width: 760px) {
+  table.users thead { display: none; }
+  table.users, table.users tbody, table.users tr, table.users td { display: block; width: 100%; }
+  table.users tr { padding: 12px 14px; border-bottom: 1px solid var(--line); display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; }
+  table.users td { border: none; padding: 0; }
+  table.users td.c-name { grid-column: 1; }
+  table.users td.c-plan { grid-column: 2; grid-row: 1; text-align: left; }
+  table.users td.c-space { grid-column: 1 / -1; margin-top: 6px; }
+  table.users td.c-extra { grid-column: 1 / -1; color: var(--muted); font-size: 12.5px; }
+  table.users td.c-wide { display: none; }
+}
+@media (min-width: 761px) { td.c-extra { display: none; } th.c-extra { display: none; } }
+
+/* detail */
+.back { margin-bottom: 12px; }
+.head { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.head h2 { margin: 0; font-size: 20px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
+.stat { padding: 12px 14px; }
+.stat .k { color: var(--muted); font-size: 12.5px; }
+.stat .v { font-weight: 600; margin-top: 2px; }
+.section { margin-bottom: 14px; }
+.section h3 { font-size: 15px; margin: 0 0 10px; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.actions .sep { width: 100%; height: 0; }
+.list { width: 100%; border-collapse: collapse; font-size: 14px; }
+.list th, .list td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: right; }
+.list th { color: var(--muted); font-weight: 600; font-size: 12.5px; }
+.list tr:last-child td { border-bottom: none; }
+.list td.fname { word-break: break-all; }
+.scroll { overflow-x: auto; }
+@media (max-width: 600px) {
+  .list.files thead { display: none; }
+  .list.files tr { display: grid; grid-template-columns: 1fr auto; padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .list.files td { border: none; padding: 2px 4px; }
+  .list.files td.fname { grid-column: 1 / -1; font-weight: 600; }
+  .list.files tr:last-child { border-bottom: none; }
+}
+
+/* dialog + toast */
+.veil { position: fixed; inset: 0; background: rgba(10,14,22,.45); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 20; }
+.dialog { max-width: 400px; width: 100%; padding: 18px; }
+.dialog p { margin: 0 0 16px; }
+.dialog .row { display: flex; gap: 8px; justify-content: flex-start; }
+.toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg);
+  padding: 9px 18px; border-radius: 999px; font-size: 14px; z-index: 30; max-width: calc(100% - 32px); text-align: center; }
+.toast.bad { background: var(--bad); color: #fff; }
+.spin { color: var(--muted); padding: 30px; text-align: center; }
+</style>
+</head>
+<body>
+<header class="bar hidden" id="bar">
+  <div class="wrap">
+    <h1>TeleTVShare · کاربران</h1>
+    <span class="who" id="who"></span>
+    <button class="btn small" id="logout">خروج</button>
+  </div>
+</header>
+
+<main class="wrap">
+  <section id="v-login" class="hidden">
+    <form class="card pad auth" id="f-login" autocomplete="on">
+      <h2>ورود به پنل</h2>
+      <p>اگر رمز را ندارید، در بات مدیریت دستور <b>/panel</b> را بفرستید.</p>
+      <label class="f"><span>نام کاربری</span><input class="in ltr" name="username" autocomplete="username" required></label>
+      <label class="f"><span>رمز عبور</span><input class="in ltr" name="password" type="password" autocomplete="current-password" required></label>
+      <div class="msg" id="m-login"></div>
+      <button class="btn primary" type="submit">ورود</button>
+    </form>
+  </section>
+
+  <section id="v-change" class="hidden">
+    <form class="card pad auth" id="f-change">
+      <h2>تعیین نام کاربری و رمز</h2>
+      <p>برای ادامه، نام کاربری و رمز موقت را با مقادیر خودتان عوض کنید.</p>
+      <label class="f"><span>رمز فعلی (موقت)</span><input class="in ltr" name="current" type="password" autocomplete="current-password" required></label>
+      <label class="f"><span>نام کاربری جدید</span><input class="in ltr" name="username" autocomplete="username" required minlength="3" maxlength="32" pattern="[A-Za-z0-9_.\-]{3,32}"></label>
+      <label class="f"><span>رمز جدید (دست‌کم ۱۰ نویسه)</span><input class="in ltr" name="password" type="password" autocomplete="new-password" required minlength="10" maxlength="128"></label>
+      <label class="f"><span>تکرار رمز جدید</span><input class="in ltr" name="password2" type="password" autocomplete="new-password" required></label>
+      <div class="msg" id="m-change"></div>
+      <button class="btn primary" type="submit">ذخیره</button>
+    </form>
+  </section>
+
+  <section id="v-list" class="hidden">
+    <div class="tools">
+      <input class="in search" id="q" type="search" placeholder="جستجو: نام، @username یا شناسه">
+      <select class="in" id="sort" aria-label="مرتب‌سازی">
+        <option value="last_seen">آخرین فعالیت</option>
+        <option value="created_at">تاریخ عضویت</option>
+        <option value="used">فضای مصرفی</option>
+        <option value="files">تعداد فایل</option>
+        <option value="expires_at">پایان اشتراک</option>
+        <option value="name">نام</option>
+      </select>
+      <button class="btn" id="dir" title="جهت مرتب‌سازی">نزولی</button>
+      <button class="btn" id="reload" title="بارگذاری دوباره">↻</button>
+    </div>
+    <div class="chips" id="chips">
+      <button class="chip on" data-f="all">همه</button>
+      <button class="chip" data-f="paid">پلن پولی</button>
+      <button class="chip" data-f="free">رایگان</button>
+      <button class="chip" data-f="tv">با تلویزیون</button>
+      <button class="chip" data-f="banned">مسدود</button>
+    </div>
+    <div class="count" id="count"></div>
+    <div class="card">
+      <table class="users">
+        <thead><tr>
+          <th data-s="name">کاربر</th>
+          <th data-s="plan">پلن</th>
+          <th data-s="used">فضا</th>
+          <th class="c-wide" data-s="files">فایل</th>
+          <th class="c-wide" data-s="tv">تلویزیون</th>
+          <th class="c-wide" data-s="created_at">عضویت</th>
+          <th class="c-wide" data-s="last_seen">آخرین فعالیت</th>
+        </tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <div class="empty hidden" id="none">کاربری پیدا نشد.</div>
+    </div>
+  </section>
+
+  <section id="v-user" class="hidden"></section>
+</main>
+
+<script nonce="__NONCE__">
+'use strict';
+const $ = (s, el = document) => el.querySelector(s);
+const PLAN_ACTIONS = [['p1g', '۱ گیگ'], ['p5g', '۵ گیگ'], ['p20g', '۲۰ گیگ'], ['p50g', '۵۰ گیگ'], ['free', 'رایگان']];
+const STORAGE = { arvan: 'آروان', cf: 'Cloudflare', vps: 'VPS', do: 'Cloudflare' };
+const KIND = { video: 'ویدیو', image: 'تصویر', audio: 'صوت', file: 'فایل' };
+const STATUS = { ready: '', failed: 'ناموفق' };
+const PAY = { pending: ['در انتظار', 'warn'], approved: ['تأیید شده', 'ok'], rejected: ['رد شده', 'bad'] };
+const state = { users: [], q: '', sort: 'last_seen', asc: false, filter: 'all', me: null };
+
+// ---------- helpers
+function h(tag, attrs, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v == null || v === false) continue;
+    if (k === 'class') el.className = v;
+    else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+    else el.setAttribute(k, v === true ? '' : v);
+  }
+  for (const k of kids.flat()) if (k != null && k !== false) el.append(k instanceof Node ? k : String(k));
+  return el;
+}
+const fa = (n) => Number(n || 0).toLocaleString('fa-IR');
+function size(n) {
+  if (n == null) return 'نامحدود';
+  const u = ['بایت', 'کیلوبایت', 'مگابایت', 'گیگابایت', 'ترابایت'];
+  let i = 0; n = Number(n) || 0;
+  while (n >= 1000 && i < u.length - 1) { n /= 1000; i++; }
+  return `${Number(i ? n.toFixed(n < 10 ? 1 : 0) : n).toLocaleString('fa-IR')} ${u[i]}`;
+}
+function date(ms, time = false) {
+  if (!ms) return '—';
+  const o = { year: 'numeric', month: 'short', day: 'numeric' };
+  if (time) Object.assign(o, { hour: '2-digit', minute: '2-digit' });
+  return new Date(ms).toLocaleString('fa-IR-u-ca-persian', o);
+}
+function ago(ms) {
+  if (!ms) return '—';
+  const s = (Date.now() - ms) / 1000;
+  if (s < 60) return 'همین الان';
+  if (s < 3600) return `${fa(Math.floor(s / 60))} دقیقه پیش`;
+  if (s < 86400) return `${fa(Math.floor(s / 3600))} ساعت پیش`;
+  if (s < 30 * 86400) return `${fa(Math.floor(s / 86400))} روز پیش`;
+  return date(ms);
+}
+function meter(used, quota) {
+  const pct = quota ? Math.min(100, (used / quota) * 100) : 0;
+  const m = h('div', { class: 'meter' + (pct >= 100 ? ' full' : '') }, h('i'));
+  m.firstChild.style.width = (quota ? Math.max(pct, used ? 2 : 0) : 0) + '%';
+  return m;
+}
+function planBadge(u) {
+  if (u.admin) return h('span', { class: 'badge acc' }, 'مدیر');
+  const expired = u.plan !== 'free' && u.expires_at && u.expires_at < Date.now();
+  return h('span', { class: 'badge ' + (u.plan === 'free' ? '' : expired ? 'warn' : 'ok') }, u.plan_title);
+}
+let toastT;
+function toast(text, bad) {
+  document.querySelectorAll('.toast').forEach((t) => t.remove());
+  const t = h('div', { class: 'toast' + (bad ? ' bad' : ''), role: 'status' }, text);
+  document.body.append(t);
+  clearTimeout(toastT); toastT = setTimeout(() => t.remove(), 3500);
+}
+function confirmBox(text, okText = 'بله', danger = false) {
+  return new Promise((resolve) => {
+    const done = (v) => { veil.remove(); document.removeEventListener('keydown', key); resolve(v); };
+    const key = (e) => { if (e.key === 'Escape') done(false); };
+    const ok = h('button', { class: 'btn ' + (danger ? 'danger' : 'primary'), onclick: () => done(true) }, okText);
+    const veil = h('div', { class: 'veil', onclick: (e) => { if (e.target === veil) done(false); } },
+      h('div', { class: 'card dialog', role: 'dialog', 'aria-modal': 'true' }, h('p', {}, text),
+        h('div', { class: 'row' }, ok, h('button', { class: 'btn', onclick: () => done(false) }, 'انصراف'))));
+    document.addEventListener('keydown', key);
+    document.body.append(veil); ok.focus();
+  });
+}
+
+// ---------- API
+async function api(path, body) {
+  const opt = body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json', 'x-panel': '1' }, body: JSON.stringify(body) };
+  let r;
+  try { r = await fetch('/panel/api' + path, { credentials: 'same-origin', ...opt }); }
+  catch { throw new Error('اتصال برقرار نشد. اینترنت یا VPN را بررسی کنید.'); }
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 401 && path !== '/login' && path !== '/credentials') { show('login'); throw new Error('نشست تمام شده؛ دوباره وارد شوید.'); }
+  if (r.status === 403 && j.error === 'change') { show('change'); throw new Error('ابتدا رمز را عوض کنید.'); }
+  if (!r.ok) { const e = new Error(j.error || `خطا (${r.status})`); e.status = r.status; e.code = j.error; e.retry = Number(r.headers.get('retry-after')) || 0; throw e; }
+  return j;
+}
+
+// ---------- views
+function show(v) {
+  for (const id of ['login', 'change', 'list', 'user']) $('#v-' + id).classList.toggle('hidden', id !== v);
+  $('#bar').classList.toggle('hidden', v === 'login');
+  $('#logout').classList.toggle('hidden', v === 'login');
+}
+
+async function boot() {
+  let me;
+  try { me = await api('/me'); } catch { return; }
+  state.me = me;
+  $('#who').textContent = me.username || '';
+  if (me.mustChange) return show('change');
+  route();
+}
+
+function route() {
+  const m = /^#\/u\/(\d+)$/.exec(location.hash);
+  if (m) return openUser(Number(m[1]));
+  show('list');
+  if (!state.users.length) loadUsers(); else renderList();
+}
+window.addEventListener('hashchange', () => { if (state.me && !state.me.mustChange) route(); });
+
+// login
+$('#f-login').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.target, btn = $('button', f), msg = $('#m-login');
+  msg.textContent = ''; btn.disabled = true;
+  try {
+    const r = await api('/login', { username: f.username.value.trim(), password: f.password.value });
+    f.reset();
+    state.me = { username: '', mustChange: r.mustChange };
+    if (r.mustChange) { show('change'); $('#bar').classList.remove('hidden'); }
+    else boot();
+  } catch (err) {
+    msg.textContent = err.code === 'locked'
+      ? `به‌خاطر تلاش‌های ناموفق، ورود ${err.retry ? fa(Math.ceil(err.retry / 60)) + ' دقیقه' : 'مدتی'} قفل است. (/panel در بات مدیریت قفل را باز می‌کند)`
+      : err.code === 'bad' ? 'نام کاربری یا رمز درست نیست.' : err.message;
+  } finally { btn.disabled = false; }
+});
+
+// change credentials
+$('#f-change').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.target, btn = $('button', f), msg = $('#m-change');
+  msg.textContent = '';
+  if (f.password.value !== f.password2.value) { msg.textContent = 'تکرار رمز جدید یکسان نیست.'; return; }
+  btn.disabled = true;
+  try {
+    await api('/credentials', { current: f.current.value, username: f.username.value.trim(), password: f.password.value });
+    f.reset(); toast('نام کاربری و رمز ذخیره شد');
+    boot();
+  } catch (err) { msg.textContent = err.code === 'login' ? 'نشست تمام شده؛ دوباره وارد شوید.' : err.message; if (err.status === 401) show('login'); }
+  finally { btn.disabled = false; }
+});
+
+$('#logout').addEventListener('click', async () => {
+  try { await api('/logout', {}); } catch {}
+  state.users = []; state.me = null; location.hash = ''; show('login');
+});
+
+// list
+async function loadUsers() {
+  $('#rows').replaceChildren(h('tr', {}, h('td', { colspan: 7, class: 'spin' }, 'در حال بارگذاری…')));
+  try { state.users = await api('/users'); renderList(); }
+  catch (err) { toast(err.message, true); $('#rows').replaceChildren(); }
+}
+
+const SORTERS = {
+  name: (u) => (u.first_name || u.username || String(u.id)).toLocaleLowerCase('fa'),
+  plan: (u) => (u.quota == null ? Infinity : u.quota),
+  used: (u) => u.used, files: (u) => u.files, tv: (u) => (u.tv ? 1 : 0),
+  created_at: (u) => u.created_at || 0, last_seen: (u) => u.last_seen || u.created_at || 0,
+  expires_at: (u) => u.expires_at || 0,
+};
+function filtered() {
+  const q = state.q.trim().toLowerCase().replace(/^@/, '');
+  const fnum = q.replace(/[۰-۹]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d));
+  let list = state.users.filter((u) => {
+    const paid = u.plan !== 'free' && u.expires_at > Date.now();
+    if (state.filter === 'paid' && !paid) return false;
+    if (state.filter === 'free' && (paid || u.admin)) return false;
+    if (state.filter === 'tv' && !u.tv) return false;
+    if (state.filter === 'banned' && !u.banned) return false;
+    if (!q) return true;
+    return (u.first_name || '').toLowerCase().includes(q) || (u.username || '').toLowerCase().includes(q) || String(u.id).includes(fnum);
+  });
+  const key = SORTERS[state.sort] || SORTERS.last_seen;
+  list.sort((a, b) => { const x = key(a), y = key(b); return (x < y ? -1 : x > y ? 1 : 0) * (state.asc ? 1 : -1); });
+  return list;
+}
+function renderList() {
+  const list = filtered();
+  $('#count').textContent = `${fa(list.length)} از ${fa(state.users.length)} کاربر`;
+  $('#none').classList.toggle('hidden', list.length > 0);
+  document.querySelectorAll('table.users th').forEach((th) => {
+    th.classList.toggle('sorted', th.dataset.s === state.sort);
+    th.classList.toggle('asc', th.dataset.s === state.sort && state.asc);
+  });
+  $('#sort').value = SORTERS[state.sort] && [...$('#sort').options].some((o) => o.value === state.sort) ? state.sort : $('#sort').value;
+  $('#dir').textContent = state.asc ? 'صعودی' : 'نزولی';
+  $('#rows').replaceChildren(...list.map((u) => h('tr', { tabindex: 0, onclick: () => (location.hash = '#/u/' + u.id), onkeydown: (e) => { if (e.key === 'Enter') location.hash = '#/u/' + u.id; } },
+    h('td', { class: 'c-name' },
+      h('div', { class: 'name' }, u.first_name || '—', u.banned ? ' ' : '', u.banned ? h('span', { class: 'badge bad' }, 'مسدود') : null),
+      h('div', { class: 'sub' }, u.username ? h('span', { class: 'ltrnum' }, '@' + u.username) : null, u.username ? ' · ' : '', h('span', { class: 'ltrnum' }, String(u.id)))),
+    h('td', { class: 'c-plan' }, planBadge(u), u.expires_at ? h('div', { class: 'sub' }, 'تا ' + date(u.expires_at)) : null),
+    h('td', { class: 'c-space' }, h('div', { class: 'sub' }, `${size(u.used)} از ${size(u.quota)}`), meter(u.used, u.quota)),
+    h('td', { class: 'c-wide' }, fa(u.files)),
+    h('td', { class: 'c-wide' }, u.tv ? h('span', { class: 'badge ok' }, 'وصل') : h('span', { class: 'sub' }, '—')),
+    h('td', { class: 'c-wide sub' }, date(u.created_at)),
+    h('td', { class: 'c-wide sub' }, ago(u.last_seen || u.created_at)),
+    h('td', { class: 'c-extra' }, `${fa(u.files)} فایل · ${u.tv ? '📺 تلویزیون وصل · ' : ''}فعالیت: ${ago(u.last_seen || u.created_at)}`),
+  )));
+}
+$('#q').addEventListener('input', (e) => { state.q = e.target.value; renderList(); });
+$('#sort').addEventListener('change', (e) => { state.sort = e.target.value; state.asc = e.target.value === 'name'; renderList(); });
+$('#dir').addEventListener('click', () => { state.asc = !state.asc; renderList(); });
+$('#reload').addEventListener('click', loadUsers);
+document.querySelectorAll('table.users th').forEach((th) => th.addEventListener('click', () => {
+  if (state.sort === th.dataset.s) state.asc = !state.asc; else { state.sort = th.dataset.s; state.asc = th.dataset.s === 'name'; }
+  renderList();
+}));
+$('#chips').addEventListener('click', (e) => {
+  const c = e.target.closest('.chip'); if (!c) return;
+  state.filter = c.dataset.f;
+  document.querySelectorAll('.chip').forEach((x) => x.classList.toggle('on', x === c));
+  renderList();
+});
+
+// one user
+async function openUser(id) {
+  show('user');
+  const v = $('#v-user');
+  v.replaceChildren(h('div', { class: 'spin' }, 'در حال بارگذاری…'));
+  window.scrollTo(0, 0);
+  try { renderUser(await api('/users/' + id)); }
+  catch (err) { v.replaceChildren(backBtn(), h('div', { class: 'card pad empty' }, err.message)); }
+}
+const backBtn = () => h('button', { class: 'btn back', onclick: () => { location.hash = ''; } }, '→ بازگشت به فهرست');
+function stat(k, ...v) { return h('div', { class: 'card stat' }, h('div', { class: 'k' }, k), h('div', { class: 'v' }, ...v)); }
+
+function renderUser(u) {
+  // keep the list in sync without reloading it
+  const i = state.users.findIndex((x) => x.id === u.id);
+  if (i >= 0) state.users[i] = { ...state.users[i], plan: u.plan, plan_title: u.plan_title, expires_at: u.expires_at, used: u.used, quota: u.quota,
+    banned: u.banned, tv: !!u.tv, files: u.files.filter((f) => f.status === 'ready').length };
+
+  const act = async (action, text, danger) => {
+    if (!(await confirmBox(text, 'بله، انجام شود', danger))) return;
+    try { const r = await api(`/users/${u.id}/action`, { action }); toast(r.note || 'انجام شد'); renderUser(r.user); }
+    catch (err) { toast(err.message, true); }
+  };
+  const name = u.first_name || (u.username ? '@' + u.username : String(u.id));
+  const actions = u.admin
+    ? h('p', { class: 'sub' }, 'این حساب مدیر است و پلن و محدودیت ندارد.')
+    : h('div', { class: 'actions' },
+        h('button', { class: 'btn primary', disabled: u.plan === 'free', title: u.plan === 'free' ? 'برای کاربر رایگان یک پلن انتخاب کنید' : null,
+          onclick: () => act('ext', `اشتراک «${u.plan_title}» برای ${name} ۳۰ روز تمدید شود؟`) }, '➕ تمدید ۳۰ روز'),
+        h('span', { class: 'sep' }),
+        ...PLAN_ACTIONS.map(([p, t]) => h('button', { class: 'btn' + (u.plan === p ? ' primary' : ''),
+          onclick: () => act(p, p === 'free' ? `پلن ${name} رایگان شود؟ (اشتراک فعلی تمام می‌شود)` : `پلن ${name} به «${t}» برای ۳۰ روز از امروز تغییر کند؟ به کاربر پیام داده می‌شود.`, p === 'free') }, t)),
+        h('span', { class: 'sep' }),
+        u.banned
+          ? h('button', { class: 'btn', onclick: () => act('unban', `مسدودی ${name} برداشته شود؟`) }, '✅ رفع مسدودی')
+          : h('button', { class: 'btn danger', onclick: () => act('ban', `${name} مسدود شود؟`, true) }, '⛔️ مسدود کردن'),
+        h('button', { class: 'btn danger', disabled: !u.tv, onclick: () => act('tvoff', `تلویزیون ${name} قطع شود؟`, true) }, '🔌 قطع تلویزیون'));
+
+  const delFile = async (f) => {
+    if (!(await confirmBox(`فایل «${f.name}» (${size(f.size)}) برای همیشه حذف شود؟ از فضای ذخیره و تلویزیون کاربر هم پاک می‌شود.`, 'حذف', true))) return;
+    try { const r = await api(`/users/${u.id}/files/${f.id}/delete`, {}); toast(r.note); renderUser(r.user); }
+    catch (err) { toast(err.message, true); }
+  };
+  const files = u.files.length
+    ? h('div', { class: 'scroll' }, h('table', { class: 'list files' },
+        h('thead', {}, h('tr', {}, h('th', {}, 'نام'), h('th', {}, 'حجم'), h('th', {}, 'تاریخ'), h('th', {}, 'محل ذخیره'), h('th', {}))),
+        h('tbody', {}, ...u.files.map((f) => h('tr', {},
+          h('td', { class: 'fname' }, f.name, ' ', h('span', { class: 'sub' }, KIND[f.kind] || ''),
+            f.status !== 'ready' ? h('span', { class: 'badge ' + (f.status === 'failed' ? 'bad' : 'warn') }, STATUS[f.status] || 'در حال انتقال') : null),
+          h('td', { class: 'sub' }, size(f.size)),
+          h('td', { class: 'sub' }, date(f.created_at, true)),
+          h('td', { class: 'sub' }, STORAGE[f.storage] || f.storage),
+          h('td', {}, h('button', { class: 'btn small danger', disabled: !['ready', 'failed'].includes(f.status), onclick: () => delFile(f) }, 'حذف')))))))
+    : h('div', { class: 'sub' }, 'فایلی ندارد.');
+  const pays = u.payments.length
+    ? h('div', { class: 'scroll' }, h('table', { class: 'list' },
+        h('thead', {}, h('tr', {}, h('th', {}, 'شماره'), h('th', {}, 'پلن'), h('th', {}, 'مبلغ'), h('th', {}, 'وضعیت'), h('th', {}, 'تاریخ'))),
+        h('tbody', {}, ...u.payments.map((p) => h('tr', {},
+          h('td', { class: 'sub' }, fa(p.id)),
+          h('td', {}, p.plan.replace(/^p/, '').replace('g', ' گیگ'), p.months > 1 ? ` · ${fa(p.months)} ماه` : ''),
+          h('td', {}, fa(p.amount), ' تومان'),
+          h('td', {}, h('span', { class: 'badge ' + (PAY[p.status]?.[1] || '') }, PAY[p.status]?.[0] || p.status)),
+          h('td', { class: 'sub' }, date(p.created_at, true)))))))
+    : h('div', { class: 'sub' }, 'پرداختی ندارد.');
+
+  $('#v-user').replaceChildren(
+    backBtn(),
+    h('div', { class: 'head' },
+      h('div', {}, h('h2', {}, name, ' ', u.banned ? h('span', { class: 'badge bad' }, 'مسدود') : null),
+        h('div', { class: 'sub' }, u.username ? h('span', { class: 'ltrnum' }, '@' + u.username) : null, u.username ? ' · ' : '', 'شناسه ', h('span', { class: 'ltrnum' }, String(u.id)))),
+      h('button', { class: 'btn small', onclick: () => openUser(u.id) }, '↻ بارگذاری دوباره')),
+    h('div', { class: 'grid' },
+      stat('پلن', planBadge(u)),
+      stat('پایان اشتراک', u.expires_at ? date(u.expires_at) : '—', u.expires_at && u.expires_at < Date.now() ? h('span', { class: 'sub' }, ' (تمام شده)') : null),
+      stat('فضا', `${size(u.used)} از ${size(u.quota)}`, meter(u.used, u.quota)),
+      stat('فایل‌ها', fa(u.files.filter((f) => f.status === 'ready').length)),
+      stat('تلویزیون', u.tv ? `وصل از ${date(u.tv.since)}` : '—'),
+      stat('عضویت', date(u.created_at)),
+      stat('آخرین فعالیت', ago(u.last_seen || u.created_at)),
+      stat('قوانین', u.terms_at ? `پذیرفته (${date(u.terms_at)})` : 'نپذیرفته'),
+      u.referred_by ? stat('دعوت‌شده توسط', h('a', { href: '#/u/' + u.referred_by, class: 'ltrnum' }, String(u.referred_by))) : null),
+    h('div', { class: 'card pad section' }, h('h3', {}, 'عملیات'), actions),
+    h('div', { class: 'card pad section' }, h('h3', {}, `فایل‌ها (${fa(u.files.length)})`), files),
+    h('div', { class: 'card pad section' }, h('h3', {}, `پرداخت‌ها (${fa(u.payments.length)})`), pays),
+  );
+}
+
+// start
+boot();
+</script>
+</body>
+</html>
