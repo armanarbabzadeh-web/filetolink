@@ -9,7 +9,7 @@
 // * Bookkeeping lives in one SQLite-backed Durable Object ("Store").
 import { DurableObject } from 'cloudflare:workers';
 import { AwsClient } from 'aws4fetch';
-import { panel, panelCredentials } from './panel.js';
+import { vpsPanel } from './vpspanel.js';
 
 const CHUNK = 1_900_000;              // in-DO storage chunk (owner's Cloudflare storage)
 const VPS_CAP = 5 * 1024 ** 3;          // owner's storage on the VPS disk
@@ -223,6 +223,9 @@ export class Store extends DurableObject {
     this.addCols('devices', { manifest_at: 'INTEGER', rep_month: 'TEXT', rep_bytes: 'INTEGER NOT NULL DEFAULT 0' });
     this.sql.exec('UPDATE files SET owner=? WHERE owner IS NULL', Number(env.OWNER_ID));
     this.sql.exec('CREATE INDEX IF NOT EXISTS files_owner ON files(owner, created_at)');
+    // The web panel moved to the owner's VPS: drop what the old in-Worker panel kept here (nothing else).
+    this.sql.exec('DROP TABLE IF EXISTS panel_sessions');
+    this.sql.exec(`DELETE FROM meta WHERE key IN ('panel_user','panel_pw','panel_must','panel_fail')`);
   }
 
   addCols(table, cols) {
@@ -496,7 +499,7 @@ export class Store extends DurableObject {
       if ((m = /^\/f\/([A-Za-z0-9]{16})(?:\/.*)?$/.exec(p))) return this.serveFile(req, m[1]);
       if ((m = /^\/t\/([A-Za-z0-9]{16})$/.exec(p))) return this.serveThumb(m[1]);
       if (p.startsWith('/api/')) return this.api(req, url, p);
-      if (p === '/panel' || p.startsWith('/panel/')) return panel(this, req, url, p);
+      if (p.startsWith('/vpspanel/')) return vpsPanel(this, req, p);
       if (p.startsWith('/helper/')) {
         if (p === '/helper/jobs') return this.helperJobs(req);
         if ((m = /^\/helper\/claim\/([A-Za-z0-9]{16})$/.exec(p)) && req.method === 'POST') return this.helperClaim(req, m[1]);
@@ -1952,7 +1955,10 @@ export class Store extends DurableObject {
     const A = (t, kb) => this.send(chat, t, kb, null, 'admin');
 
     if (name === 'start' || name === 'menu' || name === 'stats' || name === 'admin') return A(this.adminStats(), this.adminMenu());
-    if (name === 'panel') return panelCredentials(this, chat);
+    if (name === 'panel') {
+      this.meta('panel_reset_req', Date.now());
+      return A('🔐 درخواست رمز جدید به سرور شما فرستاده شد. تا حدود یک دقیقه دیگر نام کاربری و رمز موقت پنل از همین بات می‌رسد.');
+    }
     if (name === 'users') { const v = this.adminUsersView(0); return A(v.text, v.kb); }
     if (name === 'user') {
       const id = Number(arg.replace('@', '')) || this.one('SELECT id FROM users WHERE username=?', arg.replace('@', ''))?.id;
@@ -2003,7 +2009,7 @@ export class Store extends DurableObject {
       '/stats — آمار', '/users — کاربران', '/user شناسه یا @username — مدیریت کاربر',
       '/payments — رسیدها', '/gift — ساخت کد هدیه (مرحله‌به‌مرحله)', '/gifts — کدها', '/delgift کد — حذف کد',
       '/settings — شماره کارت، قیمت‌ها و سقف‌ها',
-      '/panel — نام کاربری و رمز موقت پنل وب (رمز قبلی و نشست‌ها باطل می‌شوند)',
+      '/panel — نام کاربری و رمز موقت پنل مدیریت روی سرور شما (رمز قبلی و نشست‌ها باطل می‌شوند)',
     ].join('\n');
   }
 
@@ -2724,7 +2730,12 @@ export default {
     }
     if (/^\/[ft]\//.test(p) && (req.method === 'GET' || req.method === 'HEAD')) return fwd(p);
     if (p.startsWith('/api/')) return fwd(p);
-    if (p === '/panel' || p.startsWith('/panel/')) return fwd(p);
+    if (p.startsWith('/vpspanel/')) {
+      // The owner's panel on the VPS (helper/panel.py) only.
+      const h = req.headers.get('authorization') || '';
+      if (!env.PANEL_SECRET || !timingSafeEqual(h.replace(/^Bearer /, ''), env.PANEL_SECRET)) return new Response('unauthorized', { status: 401 });
+      return fwd(p);
+    }
     if (p.startsWith('/helper/')) {
       const h = req.headers.get('authorization') || '';
       if (!env.HELPER_SECRET || !timingSafeEqual(h.replace(/^Bearer /, ''), env.HELPER_SECRET)) return new Response('unauthorized', { status: 401 });

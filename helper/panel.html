@@ -124,6 +124,10 @@ table.users tr:last-child td { border-bottom: none; }
 .list th { color: var(--muted); font-weight: 600; font-size: 12.5px; }
 .list tr:last-child td { border-bottom: none; }
 .list td.fname { word-break: break-all; }
+.list td.fname a { color: var(--accent); text-decoration: none; }
+.list td.fname a:hover { text-decoration: underline; }
+.list td.fbtns { white-space: nowrap; }
+.list td.fbtns .btn { margin-inline-start: 4px; text-decoration: none; display: inline-block; }
 .scroll { overflow-x: auto; }
 @media (max-width: 600px) {
   .list.files thead { display: none; }
@@ -486,12 +490,14 @@ function renderUser(u) {
     ? h('div', { class: 'scroll' }, h('table', { class: 'list files' },
         h('thead', {}, h('tr', {}, h('th', {}, 'نام'), h('th', {}, 'حجم'), h('th', {}, 'تاریخ'), h('th', {}, 'محل ذخیره'), h('th', {}))),
         h('tbody', {}, ...u.files.map((f) => h('tr', {},
-          h('td', { class: 'fname' }, f.name, ' ', h('span', { class: 'sub' }, KIND[f.kind] || ''),
+          h('td', { class: 'fname' }, f.url ? h('a', { href: f.url, target: '_blank', rel: 'noopener noreferrer' }, f.name) : f.name, ' ', h('span', { class: 'sub' }, KIND[f.kind] || ''),
             f.status !== 'ready' ? h('span', { class: 'badge ' + (f.status === 'failed' ? 'bad' : 'warn') }, STATUS[f.status] || 'در حال انتقال') : null),
           h('td', { class: 'sub' }, size(f.size)),
           h('td', { class: 'sub' }, date(f.created_at, true)),
           h('td', { class: 'sub' }, STORAGE[f.storage] || f.storage),
-          h('td', {}, h('button', { class: 'btn small danger', disabled: !['ready', 'failed'].includes(f.status), onclick: () => delFile(f) }, 'حذف')))))))
+          h('td', { class: 'fbtns' },
+            f.url ? h('a', { class: 'btn small', href: f.url, target: '_blank', rel: 'noopener noreferrer' }, 'باز کردن') : null,
+            h('button', { class: 'btn small danger', disabled: !['ready', 'failed'].includes(f.status), onclick: () => delFile(f) }, 'حذف')))))))
     : h('div', { class: 'sub' }, 'فایلی ندارد.');
   const pays = u.payments.length
     ? h('div', { class: 'scroll' }, h('table', { class: 'list' },

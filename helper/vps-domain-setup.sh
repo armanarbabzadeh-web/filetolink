@@ -5,7 +5,8 @@
 #  - installs Caddy (web server) which gets a free Let's Encrypt certificate by itself
 #  - Caddy listens on port 443 only (port 80 is left alone, so x-ui's own certificates are not affected)
 #    and passes ONLY /v/ /c/ /t/ links to the helper on 127.0.0.1:8090; every such link must carry a valid
-#    signature made by the TeleTVShare Worker. Anything else gets 404.
+#    signature made by the TeleTVShare Worker. /panel goes to the owner's web panel on 127.0.0.1:8091
+#    (vps-panel-setup.sh). Anything else gets 404.
 #  - opens 443/tcp in ufw (the only firewall change)
 # Undo: systemctl disable --now caddy; ufw delete allow 443/tcp
 set -e
@@ -35,6 +36,10 @@ https://$DOMAIN {
 		reverse_proxy 127.0.0.1:8090 {
 			flush_interval -1
 		}
+	}
+	@panel path /panel /panel/*
+	handle @panel {
+		reverse_proxy 127.0.0.1:8091
 	}
 	handle {
 		respond 404
