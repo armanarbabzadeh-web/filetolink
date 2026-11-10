@@ -2371,7 +2371,7 @@ export class Store extends DurableObject {
     try { if (this.budget() > 4) await this.helperWatch(); } catch (e) { console.log('helper watch failed', e.stack || e); }
     try {
       // the owner's own domain was set or changed: rewrite his TV list right away
-      const dom = this.ownDomain() || '';
+      const dom = (this.ownDomain() || '') + '|stores'; // bump the suffix to force one rewrite of the owner's TV list
       if ((this.meta('own_domain') || '') !== dom && this.budget() > 6) {
         await this.writeManifest(Number(this.env.OWNER_ID));
         this.meta('own_domain', dom);
