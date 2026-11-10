@@ -30,6 +30,8 @@ PANEL_URL = os.environ.get("PANEL_URL", "")
 PORT = int(os.environ.get("PANEL_PORT", "8091"))
 STATE = os.environ.get("PANEL_STATE", "/var/lib/teletvshare/panel.json")
 HERE = os.path.dirname(os.path.abspath(__file__))
+# Offline UI tests only: one extra http origin allowed for pictures and video (never set on the VPS).
+DEV_MEDIA = (" " + os.environ["PANEL_DEV_MEDIA"]) if re.fullmatch(r"http://127\.0\.0\.1:\d+", os.environ.get("PANEL_DEV_MEDIA", "")) else ""
 
 COOKIE = "tvs_panel"
 SESSION_S = 4 * 3600
@@ -87,6 +89,8 @@ def worker(method, path, body=None, timeout=30):
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return r.status, json.loads(r.read() or b"{}")
     except urllib.error.HTTPError as e:
+        if e.code in (401, 403):  # never pass this on as "please log in": it is the VPS-Worker key
+            return 502, {"error": "کلید ارتباط سرور با ورکر پذیرفته نشد (PANEL_SECRET)"}
         try:
             return e.code, json.loads(e.read() or b"{}")
         except ValueError:
@@ -195,7 +199,8 @@ class Handler(BaseHTTPRequestHandler):
                 page = f.read().replace("__NONCE__", nonce)
             return self.send(200, page, "text/html; charset=utf-8", {
                 "Content-Security-Policy": f"default-src 'none'; script-src 'nonce-{nonce}'; style-src 'nonce-{nonce}'; "
-                                           "connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"})
+                                           f"connect-src 'self'; img-src 'self' https: data:{DEV_MEDIA}; media-src 'self' https:{DEV_MEDIA}; "
+                                           "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"})
         return self.api("GET", path)
 
     def do_POST(self):

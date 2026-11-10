@@ -4,187 +4,280 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>پنل کاربران</title>
+<meta name="theme-color" content="#070d2b">
+<title>TeleTVShare · مدیریت</title>
+<link rel="icon" href="data:image/webp;base64,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">
 <style nonce="__NONCE__">
 :root {
-  --bg: #f4f5f7; --card: #fff; --text: #1d2330; --muted: #6b7385; --line: #e3e6ec;
-  --accent: #2f6fed; --accent-soft: #e8efff; --ok: #1a8a4a; --ok-soft: #e4f5ea;
-  --bad: #c9302c; --bad-soft: #fdeceb; --warn: #a86400; --warn-soft: #fff4e0;
-  --on-accent: #fff; --radius: 12px; --shadow: 0 1px 2px rgba(20,30,50,.06), 0 2px 8px rgba(20,30,50,.05);
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #12151b; --card: #1b1f27; --text: #e7eaf0; --muted: #98a0b3; --line: #2b313d;
-    --accent: #6d9bff; --accent-soft: #1f2a44; --ok: #4cc27c; --ok-soft: #173325;
-    --bad: #ff7b74; --bad-soft: #3a1d1d; --warn: #f1b453; --warn-soft: #3a2c14;
-    --shadow: none; --on-accent: #0b1220;
-  }
+  --bg: #070d2b; --bg2: #0b1440; --card: rgba(18, 28, 72, .72); --card-solid: #121c48; --raise: rgba(255,255,255,.05);
+  --line: rgba(255,255,255,.09); --line2: rgba(255,255,255,.16);
+  --text: #eef2ff; --muted: #a9b4d8; --faint: #6f7aa6;
+  --cyan: #38d6f5; --blue: #3b82f6; --purple: #8b5cf6;
+  --grad: linear-gradient(135deg, #38d6f5 0%, #3b82f6 50%, #8b5cf6 100%);
+  --ok: #22c55e; --bad: #ef4444; --warn: #ffb547;
+  --r: 16px; --r-s: 10px;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; }
 body {
-  background: var(--bg); color: var(--text);
-  font: 15px/1.6 Vazirmatn, "Segoe UI", Tahoma, system-ui, sans-serif;
+  min-height: 100vh; color: var(--text); background: var(--bg);
+  background-image:
+    radial-gradient(900px 500px at 100% -10%, rgba(56,214,245,.13), transparent 60%),
+    radial-gradient(800px 600px at -10% 110%, rgba(139,92,246,.16), transparent 60%);
+  background-attachment: fixed;
+  font: 15px/1.65 Vazirmatn, "Segoe UI", Tahoma, system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 button, input, select { font: inherit; color: inherit; }
+a { color: var(--cyan); }
 .hidden { display: none !important; }
-.wrap { max-width: 1180px; margin: 0 auto; padding: 16px; }
-header.bar {
-  position: sticky; top: 0; z-index: 5; background: var(--card); border-bottom: 1px solid var(--line);
-}
+.wrap { max-width: 1240px; margin: 0 auto; padding: 18px 16px 40px; }
+.ltr { direction: ltr; unicode-bidi: embed; }
+.muted { color: var(--muted); }
+.faint { color: var(--faint); font-size: 12.5px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: var(--r); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
+.pad { padding: 18px; }
+
+/* header */
+header.bar { position: sticky; top: 0; z-index: 10; background: rgba(7,13,43,.78); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border-bottom: 1px solid var(--line); }
 header.bar .wrap { display: flex; align-items: center; gap: 12px; padding-top: 10px; padding-bottom: 10px; }
-header.bar h1 { font-size: 17px; margin: 0; flex: 1; }
-header.bar .who { color: var(--muted); font-size: 13px; }
-.card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
-.pad { padding: 16px; }
-.btn {
-  border: 1px solid var(--line); background: var(--card); border-radius: 9px; padding: 7px 14px;
-  cursor: pointer; white-space: nowrap; transition: background .15s, border-color .15s;
-}
-.btn:hover { border-color: var(--accent); }
-.btn:disabled { opacity: .55; cursor: default; }
-.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
-.btn.danger { color: var(--bad); }
-.btn.danger:hover { border-color: var(--bad); background: var(--bad-soft); }
-.btn.small { padding: 3px 10px; font-size: 13px; }
-.btn.ghost { border-color: transparent; background: transparent; }
+.brand { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; text-decoration: none; color: inherit; cursor: pointer; }
+.brand img { width: 38px; height: 38px; border-radius: 10px; }
+.brand b { font-size: 16px; display: block; line-height: 1.2; }
+.brand span { font-size: 12px; color: var(--muted); }
+.chip-user { font-size: 13px; color: var(--muted); padding: 4px 12px; border: 1px solid var(--line); border-radius: 999px; }
+
+/* buttons */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--line2); background: var(--raise);
+  border-radius: var(--r-s); padding: 8px 15px; cursor: pointer; white-space: nowrap; text-decoration: none; color: var(--text);
+  transition: background .15s, border-color .15s, transform .1s, opacity .15s; }
+.btn:hover { background: rgba(255,255,255,.1); border-color: rgba(255,255,255,.28); }
+.btn:active { transform: scale(.98); }
+.btn:disabled { opacity: .4; cursor: default; transform: none; }
+.btn.primary { background: var(--grad); border-color: transparent; color: #061027; font-weight: 700; }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn.on { background: rgba(56,214,245,.16); border-color: var(--cyan); color: var(--cyan); }
+.btn.danger { color: #ff8a8a; border-color: rgba(239,68,68,.35); }
+.btn.danger:hover { background: rgba(239,68,68,.15); border-color: var(--bad); }
+.btn.small { padding: 4px 11px; font-size: 13px; border-radius: 8px; }
+.btn.icon { padding: 7px; width: 36px; height: 36px; }
+.btn svg { width: 17px; height: 17px; flex: none; }
 
 /* auth */
-.auth { max-width: 380px; margin: 9vh auto 0; }
-.auth h2 { margin: 0 0 4px; font-size: 20px; }
-.auth p { margin: 0 0 16px; color: var(--muted); font-size: 14px; }
-label.f { display: block; margin-bottom: 12px; font-size: 14px; }
-label.f span { display: block; margin-bottom: 4px; color: var(--muted); }
-input.in, select.in {
-  width: 100%; padding: 9px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--bg);
-  outline: none;
-}
-input.in:focus, select.in:focus { border-color: var(--accent); }
-input.ltr { direction: ltr; text-align: left; }
-.msg { min-height: 22px; font-size: 14px; color: var(--bad); margin: 4px 0 10px; }
-.auth .btn.primary { width: 100%; padding: 10px; }
+.auth { max-width: 400px; margin: 8vh auto 0; text-align: center; }
+.auth .logo { width: 84px; height: 84px; border-radius: 22px; box-shadow: 0 10px 40px rgba(56,214,245,.25); margin-bottom: 14px; }
+.auth h2 { margin: 0 0 4px; font-size: 21px; }
+.auth p { margin: 0 0 20px; color: var(--muted); font-size: 14px; }
+.auth form { text-align: right; }
+label.f { display: block; margin-bottom: 13px; font-size: 13.5px; }
+label.f span { display: block; margin-bottom: 5px; color: var(--muted); }
+.in { width: 100%; padding: 10px 13px; border: 1px solid var(--line2); border-radius: var(--r-s); background: rgba(3,8,30,.55); outline: none; transition: border-color .15s, box-shadow .15s; }
+.in:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px rgba(56,214,245,.15); }
+input.ltr { text-align: left; }
+select.in { width: auto; cursor: pointer; }
+select.in option { background: var(--card-solid); }
+.msg { min-height: 22px; font-size: 13.5px; color: #ff8a8a; margin: 2px 0 10px; }
+.auth .btn.primary { width: 100%; padding: 11px; }
 
-/* list */
+/* overview */
+.tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+.tile { padding: 14px 16px; position: relative; overflow: hidden; }
+.tile .k { color: var(--muted); font-size: 12.5px; }
+.tile .v { font-size: 22px; font-weight: 800; margin-top: 2px; }
+.tile .s { color: var(--faint); font-size: 12px; }
+.tile::after { content: ""; position: absolute; inset: auto -30px -40px auto; width: 110px; height: 110px; border-radius: 50%; background: var(--grad); opacity: .12; }
+@media (max-width: 820px) { .tiles { grid-template-columns: repeat(2, 1fr); } .tile .v { font-size: 19px; } }
+
 .tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
-.tools .search { flex: 1 1 240px; }
-.tools select.in { width: auto; }
+.search { position: relative; flex: 1 1 260px; }
+.search svg { position: absolute; top: 50%; right: 12px; transform: translateY(-50%); width: 17px; height: 17px; color: var(--faint); pointer-events: none; }
+.search .in { padding-right: 38px; }
 .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
-.chip { border: 1px solid var(--line); background: var(--card); border-radius: 999px; padding: 3px 12px; font-size: 13px; cursor: pointer; }
-.chip.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
-.count { color: var(--muted); font-size: 13px; margin: 0 4px 8px; }
+.chip { border: 1px solid var(--line); background: var(--raise); border-radius: 999px; padding: 4px 13px; font-size: 13px; cursor: pointer; color: var(--muted); transition: all .15s; }
+.chip:hover { color: var(--text); border-color: var(--line2); }
+.chip.on { background: rgba(56,214,245,.14); border-color: var(--cyan); color: var(--cyan); }
+.chip .n { opacity: .7; margin-inline-start: 4px; }
+.count { color: var(--faint); font-size: 12.5px; margin: 0 4px 8px; }
+
+/* users table */
 table.users { width: 100%; border-collapse: collapse; }
-table.users th, table.users td { padding: 10px 12px; text-align: right; border-bottom: 1px solid var(--line); vertical-align: middle; }
-table.users th { font-size: 12.5px; color: var(--muted); font-weight: 600; cursor: pointer; user-select: none; white-space: nowrap; }
+table.users th, table.users td { padding: 11px 14px; text-align: right; vertical-align: middle; }
+table.users th { font-size: 12px; color: var(--faint); font-weight: 600; cursor: pointer; user-select: none; white-space: nowrap; border-bottom: 1px solid var(--line); }
+table.users th.sorted { color: var(--cyan); }
 table.users th.sorted::after { content: " ▾"; }
 table.users th.sorted.asc::after { content: " ▴"; }
-table.users tbody tr { cursor: pointer; }
-table.users tbody tr:hover { background: var(--accent-soft); }
-table.users tr:last-child td { border-bottom: none; }
-.name { font-weight: 600; }
-.sub { color: var(--muted); font-size: 12.5px; }
-.ltrnum { direction: ltr; unicode-bidi: embed; }
-.badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; background: var(--bg); border: 1px solid var(--line); white-space: nowrap; }
-.badge.ok { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
-.badge.bad { background: var(--bad-soft); color: var(--bad); border-color: transparent; }
-.badge.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
-.badge.acc { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
-.meter { height: 6px; background: var(--bg); border-radius: 4px; overflow: hidden; margin-top: 4px; min-width: 80px; }
-.meter > i { display: block; height: 100%; background: var(--accent); border-radius: 4px; }
+table.users tbody tr { cursor: pointer; transition: background .12s; }
+table.users tbody tr + tr td { border-top: 1px solid var(--line); }
+table.users tbody tr:hover { background: rgba(56,214,245,.06); }
+.who { display: flex; align-items: center; gap: 11px; min-width: 0; }
+.avatar { width: 38px; height: 38px; border-radius: 50%; flex: none; display: grid; place-items: center; font-weight: 800; color: #061027; font-size: 15px; }
+.avatar.big { width: 64px; height: 64px; font-size: 26px; }
+.who .name { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.badge { display: inline-flex; align-items: center; gap: 4px; padding: 1px 9px; border-radius: 999px; font-size: 12px; white-space: nowrap; background: rgba(255,255,255,.07); color: var(--muted); }
+.badge.ok { background: rgba(34,197,94,.15); color: #5be38b; }
+.badge.bad { background: rgba(239,68,68,.16); color: #ff8a8a; }
+.badge.warn { background: rgba(255,181,71,.15); color: var(--warn); }
+.badge.acc { background: rgba(139,92,246,.2); color: #c4b1ff; }
+.badge.cyan { background: rgba(56,214,245,.15); color: var(--cyan); }
+.meter { height: 6px; background: rgba(255,255,255,.08); border-radius: 4px; overflow: hidden; margin-top: 5px; min-width: 90px; }
+.meter > i { display: block; height: 100%; background: var(--grad); border-radius: 4px; }
 .meter.full > i { background: var(--bad); }
-.empty { text-align: center; color: var(--muted); padding: 40px 0; }
+.empty { text-align: center; color: var(--muted); padding: 46px 10px; }
+.empty svg { width: 42px; height: 42px; color: var(--faint); display: block; margin: 0 auto 8px; }
+.spin { padding: 50px; text-align: center; color: var(--muted); }
+.spin::before { content: ""; display: block; width: 28px; height: 28px; margin: 0 auto 10px; border-radius: 50%; border: 3px solid rgba(255,255,255,.12); border-top-color: var(--cyan); animation: rot .8s linear infinite; }
+@keyframes rot { to { transform: rotate(360deg); } }
 
-@media (max-width: 760px) {
+@media (max-width: 780px) {
   table.users thead { display: none; }
   table.users, table.users tbody, table.users tr, table.users td { display: block; width: 100%; }
-  table.users tr { padding: 12px 14px; border-bottom: 1px solid var(--line); display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; }
-  table.users td { border: none; padding: 0; }
+  table.users tr { padding: 13px 14px; display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; }
+  table.users tbody tr + tr td { border-top: none; }
+  table.users tbody tr + tr { border-top: 1px solid var(--line); }
+  table.users td { padding: 0; }
   table.users td.c-name { grid-column: 1; }
   table.users td.c-plan { grid-column: 2; grid-row: 1; text-align: left; }
   table.users td.c-space { grid-column: 1 / -1; margin-top: 6px; }
-  table.users td.c-extra { grid-column: 1 / -1; color: var(--muted); font-size: 12.5px; }
+  table.users td.c-extra { grid-column: 1 / -1; }
   table.users td.c-wide { display: none; }
 }
-@media (min-width: 761px) { td.c-extra { display: none; } th.c-extra { display: none; } }
+@media (min-width: 781px) { td.c-extra { display: none; } }
 
-/* detail */
-.back { margin-bottom: 12px; }
-.head { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between; margin-bottom: 14px; }
-.head h2 { margin: 0; font-size: 20px; }
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
+/* user page */
+.back { margin-bottom: 14px; }
+.hero { display: flex; flex-wrap: wrap; gap: 16px 20px; align-items: center; margin-bottom: 14px; position: relative; overflow: hidden; }
+.hero::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 3px; background: var(--grad); }
+.hero .id { flex: 1 1 240px; min-width: 0; }
+.hero h2 { margin: 0; font-size: 21px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.hero .space { flex: 1 1 260px; }
+.hero .space .nums { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); }
+.hero .space .meter { height: 9px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; margin-bottom: 14px; }
 .stat { padding: 12px 14px; }
-.stat .k { color: var(--muted); font-size: 12.5px; }
-.stat .v { font-weight: 600; margin-top: 2px; }
+.stat .k { color: var(--faint); font-size: 12px; }
+.stat .v { font-weight: 700; margin-top: 2px; }
 .section { margin-bottom: 14px; }
-.section h3 { font-size: 15px; margin: 0 0 10px; }
-.actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.actions .sep { width: 100%; height: 0; }
-.list { width: 100%; border-collapse: collapse; font-size: 14px; }
-.list th, .list td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: right; }
-.list th { color: var(--muted); font-weight: 600; font-size: 12.5px; }
-.list tr:last-child td { border-bottom: none; }
-.list td.fname { word-break: break-all; }
-.list td.fname a { color: var(--accent); text-decoration: none; }
-.list td.fname a:hover { text-decoration: underline; }
-.list td.fbtns { white-space: nowrap; }
-.list td.fbtns .btn { margin-inline-start: 4px; text-decoration: none; display: inline-block; }
-.scroll { overflow-x: auto; }
-@media (max-width: 600px) {
-  .list.files thead { display: none; }
-  .list.files tr { display: grid; grid-template-columns: 1fr auto; padding: 8px 0; border-bottom: 1px solid var(--line); }
-  .list.files td { border: none; padding: 2px 4px; }
-  .list.files td.fname { grid-column: 1 / -1; font-weight: 600; }
-  .list.files tr:last-child { border-bottom: none; }
-}
+.section h3 { font-size: 15.5px; margin: 0 0 12px; display: flex; align-items: center; gap: 8px; }
+.section h3 .badge { font-weight: 400; }
+.acts { display: flex; flex-wrap: wrap; gap: 14px 22px; }
+.acts .grp { display: flex; flex-direction: column; gap: 7px; }
+.acts .grp > span { font-size: 12px; color: var(--faint); }
+.acts .row { display: flex; flex-wrap: wrap; gap: 7px; }
+.seg { display: inline-flex; border: 1px solid var(--line2); border-radius: var(--r-s); overflow: hidden; }
+.seg .btn { border: none; border-radius: 0; background: transparent; }
+.seg .btn + .btn { border-inline-start: 1px solid var(--line2); }
+.seg .btn.on { background: rgba(56,214,245,.16); }
 
-/* dialog + toast */
-.veil { position: fixed; inset: 0; background: rgba(10,14,22,.45); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 20; }
-.dialog { max-width: 400px; width: 100%; padding: 18px; }
-.dialog p { margin: 0 0 16px; }
-.dialog .row { display: flex; gap: 8px; justify-content: flex-start; }
-.toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg);
-  padding: 9px 18px; border-radius: 999px; font-size: 14px; z-index: 30; max-width: calc(100% - 32px); text-align: center; }
+/* files grid (like the TV app) */
+.ftools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.ftools .chips { margin: 0; }
+.files { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px; }
+@media (max-width: 520px) { .files { grid-template-columns: repeat(2, 1fr); gap: 10px; } }
+.fcard { position: relative; border-radius: 14px; overflow: hidden; background: var(--card-solid); border: 1px solid var(--line); cursor: pointer;
+  transition: transform .15s, border-color .15s, box-shadow .15s; outline: none; }
+.fcard:hover, .fcard:focus-visible { transform: translateY(-3px); border-color: rgba(56,214,245,.55); box-shadow: 0 12px 30px rgba(0,0,0,.35), 0 0 0 1px rgba(56,214,245,.25); }
+.thumb { position: relative; aspect-ratio: 16 / 10; background: #0a1238; overflow: hidden; }
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform .3s; }
+.fcard:hover .thumb img { transform: scale(1.05); }
+.thumb .ph { position: absolute; inset: 0; display: grid; place-items: center; }
+.thumb .ph svg { width: 40%; max-width: 64px; height: auto; color: rgba(255,255,255,.9); filter: drop-shadow(0 4px 12px rgba(0,0,0,.3)); }
+.ph.video { background: linear-gradient(135deg, #1d4ed8, #7c3aed); }
+.ph.image { background: linear-gradient(135deg, #0891b2, #2563eb); }
+.ph.audio { background: linear-gradient(135deg, #7c3aed, #db2777); }
+.ph.file { background: linear-gradient(135deg, #334155, #1e293b); }
+.thumb .shade { position: absolute; inset: auto 0 0 0; height: 55%; background: linear-gradient(transparent, rgba(0,0,0,.65)); pointer-events: none; }
+.thumb .play { position: absolute; top: 50%; left: 50%; width: 46px; height: 46px; transform: translate(-50%,-50%) scale(.85); border-radius: 50%;
+  background: rgba(7,13,43,.6); backdrop-filter: blur(4px); display: grid; place-items: center; opacity: 0; transition: opacity .15s, transform .15s; }
+.thumb .play svg { width: 20px; height: 20px; color: #fff; margin-left: 3px; }
+.fcard:hover .play { opacity: 1; transform: translate(-50%,-50%) scale(1); }
+.ov { position: absolute; display: flex; gap: 5px; }
+.ov.tl { top: 8px; left: 8px; } .ov.tr { top: 8px; right: 8px; } .ov.bl { bottom: 8px; left: 8px; } .ov.br { bottom: 8px; right: 8px; }
+.pill { font-size: 11.5px; padding: 1px 8px; border-radius: 6px; background: rgba(0,0,0,.62); color: #fff; backdrop-filter: blur(4px); white-space: nowrap; }
+.pill.st-arvan { background: rgba(8,145,178,.85); } .pill.st-cf { background: rgba(234,88,12,.85); } .pill.st-vps { background: rgba(124,58,237,.85); }
+.pill.bad { background: rgba(239,68,68,.9); } .pill.warn { background: rgba(217,119,6,.9); }
+.fbody { padding: 9px 11px 11px; }
+.fname { text-align: start; font-size: 13.5px; font-weight: 600; line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; min-height: 2.9em; }
+.fmeta { font-size: 12px; color: var(--faint); margin-top: 3px; display: flex; justify-content: space-between; gap: 6px; }
+.fdel { position: absolute; top: 8px; left: 8px; width: 30px; height: 30px; border-radius: 8px; border: none; background: rgba(0,0,0,.55); color: #ffb4b4;
+  display: grid; place-items: center; cursor: pointer; opacity: 0; transition: opacity .15s, background .15s; }
+.fdel svg { width: 15px; height: 15px; }
+.fcard:hover .fdel, .fcard:focus-within .fdel { opacity: 1; }
+.fdel:hover { background: rgba(239,68,68,.9); color: #fff; }
+@media (hover: none) { .fdel { opacity: 1; } }
+
+/* payments */
+.plist { display: flex; flex-direction: column; }
+.prow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 10px 2px; }
+.prow + .prow { border-top: 1px solid var(--line); }
+.prow .amt { font-weight: 700; margin-inline-start: auto; }
+
+/* viewer + dialogs + toast */
+.veil { position: fixed; inset: 0; background: rgba(3,6,22,.78); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 40; animation: fade .15s; }
+@keyframes fade { from { opacity: 0; } }
+.dialog { max-width: 420px; width: 100%; padding: 20px; background: var(--card-solid); }
+.dialog p { margin: 0 0 18px; }
+.dialog .row { display: flex; gap: 8px; }
+.viewer { width: min(1100px, 100%); max-height: 100%; display: flex; flex-direction: column; background: var(--card-solid); border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
+.viewer .stage { background: #000; display: grid; place-items: center; min-height: 200px; max-height: calc(100vh - 190px); }
+.viewer .stage video, .viewer .stage img { max-width: 100%; max-height: calc(100vh - 190px); display: block; }
+.viewer .stage audio { width: min(520px, 90%); margin: 40px 0; }
+.viewer .stage .ph { width: 100%; aspect-ratio: 16 / 7; display: grid; place-items: center; }
+.viewer .stage .ph svg { width: 70px; height: 70px; color: #fff; }
+.viewer .info { padding: 14px 16px; display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; }
+.viewer .info .t { flex: 1 1 260px; min-width: 0; }
+.viewer .info .t b { display: block; word-break: break-word; }
+.viewer .close { position: absolute; top: 14px; left: 14px; z-index: 41; }
+.toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); background: #eef2ff; color: #0b1440; font-weight: 600;
+  padding: 10px 20px; border-radius: 999px; font-size: 14px; z-index: 60; max-width: calc(100% - 32px); text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,.4); animation: up .2s; }
 .toast.bad { background: var(--bad); color: #fff; }
-.spin { color: var(--muted); padding: 30px; text-align: center; }
+@keyframes up { from { transform: translate(-50%, 10px); opacity: 0; } }
 </style>
 </head>
 <body>
 <header class="bar hidden" id="bar">
   <div class="wrap">
-    <h1>TeleTVShare · کاربران</h1>
-    <span class="who" id="who"></span>
+    <a class="brand" id="home"><img alt="" src="data:image/webp;base64,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"><div><b>TeleTVShare</b><span>پنل مدیریت کاربران</span></div></a>
+    <span class="chip-user ltr" id="who"></span>
     <button class="btn small" id="logout">خروج</button>
   </div>
 </header>
 
 <main class="wrap">
   <section id="v-login" class="hidden">
-    <form class="card pad auth" id="f-login" autocomplete="on">
-      <h2>ورود به پنل</h2>
-      <p>اگر رمز را ندارید، در بات مدیریت دستور <b>/panel</b> را بفرستید.</p>
-      <label class="f"><span>نام کاربری</span><input class="in ltr" name="username" autocomplete="username" required></label>
-      <label class="f"><span>رمز عبور</span><input class="in ltr" name="password" type="password" autocomplete="current-password" required></label>
-      <div class="msg" id="m-login"></div>
-      <button class="btn primary" type="submit">ورود</button>
-    </form>
+    <div class="card pad auth">
+      <img class="logo" alt="" src="data:image/webp;base64,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">
+      <h2>ورود به پنل مدیریت</h2>
+      <p>اگر رمز را ندارید، در بات مدیریت <b>/panel</b> را بفرستید.</p>
+      <form id="f-login" autocomplete="on">
+        <label class="f"><span>نام کاربری</span><input class="in ltr" name="username" autocomplete="username" required></label>
+        <label class="f"><span>رمز عبور</span><input class="in ltr" name="password" type="password" autocomplete="current-password" required></label>
+        <div class="msg" id="m-login"></div>
+        <button class="btn primary" type="submit">ورود</button>
+      </form>
+    </div>
   </section>
 
   <section id="v-change" class="hidden">
-    <form class="card pad auth" id="f-change">
-      <h2>تعیین نام کاربری و رمز</h2>
+    <div class="card pad auth">
+      <img class="logo" alt="" src="data:image/webp;base64,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">
+      <h2>نام کاربری و رمز خودتان</h2>
       <p>برای ادامه، نام کاربری و رمز موقت را با مقادیر خودتان عوض کنید.</p>
-      <label class="f"><span>رمز فعلی (موقت)</span><input class="in ltr" name="current" type="password" autocomplete="current-password" required></label>
-      <label class="f"><span>نام کاربری جدید</span><input class="in ltr" name="username" autocomplete="username" required minlength="3" maxlength="32" pattern="[A-Za-z0-9_.\-]{3,32}"></label>
-      <label class="f"><span>رمز جدید (دست‌کم ۱۰ نویسه)</span><input class="in ltr" name="password" type="password" autocomplete="new-password" required minlength="10" maxlength="128"></label>
-      <label class="f"><span>تکرار رمز جدید</span><input class="in ltr" name="password2" type="password" autocomplete="new-password" required></label>
-      <div class="msg" id="m-change"></div>
-      <button class="btn primary" type="submit">ذخیره</button>
-    </form>
+      <form id="f-change">
+        <label class="f"><span>رمز فعلی (موقت)</span><input class="in ltr" name="current" type="password" autocomplete="current-password" required></label>
+        <label class="f"><span>نام کاربری جدید</span><input class="in ltr" name="username" autocomplete="username" required minlength="3" maxlength="32" pattern="[A-Za-z0-9_.\-]{3,32}"></label>
+        <label class="f"><span>رمز جدید (دست‌کم ۱۰ نویسه)</span><input class="in ltr" name="password" type="password" autocomplete="new-password" required minlength="10" maxlength="128"></label>
+        <label class="f"><span>تکرار رمز جدید</span><input class="in ltr" name="password2" type="password" autocomplete="new-password" required></label>
+        <div class="msg" id="m-change"></div>
+        <button class="btn primary" type="submit">ذخیره</button>
+      </form>
+    </div>
   </section>
 
   <section id="v-list" class="hidden">
+    <div class="tiles" id="tiles"></div>
     <div class="tools">
-      <input class="in search" id="q" type="search" placeholder="جستجو: نام، @username یا شناسه">
+      <div class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input class="in" id="q" type="search" placeholder="جستجو: نام، ‎@username‎ یا شناسه"></div>
       <select class="in" id="sort" aria-label="مرتب‌سازی">
         <option value="last_seen">آخرین فعالیت</option>
         <option value="created_at">تاریخ عضویت</option>
@@ -193,12 +286,12 @@ table.users tr:last-child td { border-bottom: none; }
         <option value="expires_at">پایان اشتراک</option>
         <option value="name">نام</option>
       </select>
-      <button class="btn" id="dir" title="جهت مرتب‌سازی">نزولی</button>
-      <button class="btn" id="reload" title="بارگذاری دوباره">↻</button>
+      <button class="btn" id="dir">نزولی</button>
+      <button class="btn icon" id="reload" title="بارگذاری دوباره" aria-label="بارگذاری دوباره"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 5v6h-6"/></svg></button>
     </div>
     <div class="chips" id="chips">
       <button class="chip on" data-f="all">همه</button>
-      <button class="chip" data-f="paid">پلن پولی</button>
+      <button class="chip" data-f="paid">اشتراک فعال</button>
       <button class="chip" data-f="free">رایگان</button>
       <button class="chip" data-f="tv">با تلویزیون</button>
       <button class="chip" data-f="banned">مسدود</button>
@@ -217,7 +310,7 @@ table.users tr:last-child td { border-bottom: none; }
         </tr></thead>
         <tbody id="rows"></tbody>
       </table>
-      <div class="empty hidden" id="none">کاربری پیدا نشد.</div>
+      <div class="empty hidden" id="none">کاربری با این مشخصات پیدا نشد.</div>
     </div>
   </section>
 
@@ -227,12 +320,31 @@ table.users tr:last-child td { border-bottom: none; }
 <script nonce="__NONCE__">
 'use strict';
 const $ = (s, el = document) => el.querySelector(s);
-const PLAN_ACTIONS = [['p1g', '۱ گیگ'], ['p5g', '۵ گیگ'], ['p20g', '۲۰ گیگ'], ['p50g', '۵۰ گیگ'], ['free', 'رایگان']];
-const STORAGE = { arvan: 'آروان', cf: 'Cloudflare', vps: 'VPS', do: 'Cloudflare' };
+const PLAN_ACTIONS = [['p1g', '۱ گیگ'], ['p5g', '۵ گیگ'], ['p20g', '۲۰ گیگ'], ['p50g', '۵۰ گیگ']];
+const STORAGE = { arvan: 'آروان', cf: 'Cloudflare', do: 'Cloudflare', vps: 'VPS', remote: 'لینک' };
 const KIND = { video: 'ویدیو', image: 'تصویر', audio: 'صوت', file: 'فایل' };
-const STATUS = { ready: '', failed: 'ناموفق' };
 const PAY = { pending: ['در انتظار', 'warn'], approved: ['تأیید شده', 'ok'], rejected: ['رد شده', 'bad'] };
-const state = { users: [], q: '', sort: 'last_seen', asc: false, filter: 'all', me: null };
+const state = { users: [], q: '', sort: 'last_seen', asc: false, filter: 'all', me: null, fkind: 'all', fsort: 'new' };
+
+// ---------- icons (inline SVG, built safely)
+const ICONS = {
+  video: '<path d="M8 5.5v13l11-6.5z" fill="currentColor" stroke="none"/>',
+  image: '<rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/>',
+  audio: '<path d="M9 18V6l11-2v12"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/>',
+  file: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>',
+  trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/>',
+  dl: '<path d="M12 4v11m0 0-4-4m4 4 4-4M5 20h14"/>',
+  ext: '<path d="M14 4h6v6M20 4l-9 9M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/>',
+  x: '<path d="M6 6l12 12M18 6 6 18"/>',
+  folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+};
+function icon(name) {
+  const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  s.setAttribute('viewBox', '0 0 24 24'); s.setAttribute('fill', 'none'); s.setAttribute('stroke', 'currentColor');
+  s.setAttribute('stroke-width', '2'); s.setAttribute('stroke-linecap', 'round'); s.setAttribute('stroke-linejoin', 'round');
+  s.innerHTML = ICONS[name] || ICONS.file; // fixed markup from ICONS only, never data
+  return s;
+}
 
 // ---------- helpers
 function h(tag, attrs, ...kids) {
@@ -269,17 +381,33 @@ function ago(ms) {
   if (s < 30 * 86400) return `${fa(Math.floor(s / 86400))} روز پیش`;
   return date(ms);
 }
+function dur(sec) {
+  if (!sec) return '';
+  sec = Math.round(sec);
+  const hh = Math.floor(sec / 3600), mm = Math.floor((sec % 3600) / 60), ss = sec % 60;
+  const p = (x) => String(x).padStart(2, '0');
+  return (hh ? `${hh}:${p(mm)}:${p(ss)}` : `${mm}:${p(ss)}`).replace(/\d/g, (d) => '۰۱۲۳۴۵۶۷۸۹'[d]);
+}
 function meter(used, quota) {
   const pct = quota ? Math.min(100, (used / quota) * 100) : 0;
   const m = h('div', { class: 'meter' + (pct >= 100 ? ' full' : '') }, h('i'));
   m.firstChild.style.width = (quota ? Math.max(pct, used ? 2 : 0) : 0) + '%';
   return m;
 }
+const HUES = [[56, 214, 245], [59, 130, 246], [139, 92, 246], [236, 72, 153], [34, 197, 94], [255, 181, 71]];
+function avatar(u, big) {
+  const name = (u.first_name || u.username || '?').trim();
+  const c = HUES[Math.abs(Number(u.id) || 0) % HUES.length];
+  const a = h('div', { class: 'avatar' + (big ? ' big' : '') }, [...name][0] || '?');
+  a.style.background = `linear-gradient(135deg, rgb(${c}), rgba(${c}, .55))`;
+  return a;
+}
 function planBadge(u) {
   if (u.admin) return h('span', { class: 'badge acc' }, 'مدیر');
   const expired = u.plan !== 'free' && u.expires_at && u.expires_at < Date.now();
   return h('span', { class: 'badge ' + (u.plan === 'free' ? '' : expired ? 'warn' : 'ok') }, u.plan_title);
 }
+const userName = (u) => u.first_name || (u.username ? '@' + u.username : String(u.id));
 let toastT;
 function toast(text, bad) {
   document.querySelectorAll('.toast').forEach((t) => t.remove());
@@ -287,16 +415,21 @@ function toast(text, bad) {
   document.body.append(t);
   clearTimeout(toastT); toastT = setTimeout(() => t.remove(), 3500);
 }
+function modal(content, onClose) {
+  const done = () => { veil.remove(); document.removeEventListener('keydown', key); onClose && onClose(); };
+  const key = (e) => { if (e.key === 'Escape') done(); };
+  const veil = h('div', { class: 'veil', onclick: (e) => { if (e.target === veil) done(); } }, content);
+  document.addEventListener('keydown', key);
+  document.body.append(veil);
+  return done;
+}
 function confirmBox(text, okText = 'بله', danger = false) {
   return new Promise((resolve) => {
-    const done = (v) => { veil.remove(); document.removeEventListener('keydown', key); resolve(v); };
-    const key = (e) => { if (e.key === 'Escape') done(false); };
-    const ok = h('button', { class: 'btn ' + (danger ? 'danger' : 'primary'), onclick: () => done(true) }, okText);
-    const veil = h('div', { class: 'veil', onclick: (e) => { if (e.target === veil) done(false); } },
-      h('div', { class: 'card dialog', role: 'dialog', 'aria-modal': 'true' }, h('p', {}, text),
-        h('div', { class: 'row' }, ok, h('button', { class: 'btn', onclick: () => done(false) }, 'انصراف'))));
-    document.addEventListener('keydown', key);
-    document.body.append(veil); ok.focus();
+    let val = false;
+    const ok = h('button', { class: 'btn ' + (danger ? 'danger' : 'primary'), onclick: () => { val = true; close(); } }, okText);
+    const close = modal(h('div', { class: 'card dialog', role: 'dialog', 'aria-modal': 'true' }, h('p', {}, text),
+      h('div', { class: 'row' }, ok, h('button', { class: 'btn', onclick: () => close() }, 'انصراف'))), () => resolve(val));
+    ok.focus();
   });
 }
 
@@ -305,7 +438,7 @@ async function api(path, body) {
   const opt = body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json', 'x-panel': '1' }, body: JSON.stringify(body) };
   let r;
   try { r = await fetch('/panel/api' + path, { credentials: 'same-origin', ...opt }); }
-  catch { throw new Error('اتصال برقرار نشد. اینترنت یا VPN را بررسی کنید.'); }
+  catch { throw new Error('اتصال برقرار نشد. اینترنت را بررسی کنید.'); }
   const j = await r.json().catch(() => ({}));
   if (r.status === 401 && path !== '/login' && path !== '/credentials') { show('login'); throw new Error('نشست تمام شده؛ دوباره وارد شوید.'); }
   if (r.status === 403 && j.error === 'change') { show('change'); throw new Error('ابتدا رمز را عوض کنید.'); }
@@ -319,7 +452,6 @@ function show(v) {
   $('#bar').classList.toggle('hidden', v === 'login');
   $('#logout').classList.toggle('hidden', v === 'login');
 }
-
 async function boot() {
   let me;
   try { me = await api('/me'); } catch { return; }
@@ -328,7 +460,6 @@ async function boot() {
   if (me.mustChange) return show('change');
   route();
 }
-
 function route() {
   const m = /^#\/u\/(\d+)$/.exec(location.hash);
   if (m) return openUser(Number(m[1]));
@@ -336,8 +467,8 @@ function route() {
   if (!state.users.length) loadUsers(); else renderList();
 }
 window.addEventListener('hashchange', () => { if (state.me && !state.me.mustChange) route(); });
+$('#home').addEventListener('click', () => { location.hash = ''; });
 
-// login
 $('#f-login').addEventListener('submit', async (e) => {
   e.preventDefault();
   const f = e.target, btn = $('button', f), msg = $('#m-login');
@@ -346,16 +477,13 @@ $('#f-login').addEventListener('submit', async (e) => {
     const r = await api('/login', { username: f.username.value.trim(), password: f.password.value });
     f.reset();
     state.me = { username: '', mustChange: r.mustChange };
-    if (r.mustChange) { show('change'); $('#bar').classList.remove('hidden'); }
-    else boot();
+    if (r.mustChange) show('change'); else boot();
   } catch (err) {
     msg.textContent = err.code === 'locked'
       ? `به‌خاطر تلاش‌های ناموفق، ورود ${err.retry ? fa(Math.ceil(err.retry / 60)) + ' دقیقه' : 'مدتی'} قفل است. (/panel در بات مدیریت قفل را باز می‌کند)`
       : err.code === 'bad' ? 'نام کاربری یا رمز درست نیست.' : err.message;
   } finally { btn.disabled = false; }
 });
-
-// change credentials
 $('#f-change').addEventListener('submit', async (e) => {
   e.preventDefault();
   const f = e.target, btn = $('button', f), msg = $('#m-change');
@@ -364,24 +492,33 @@ $('#f-change').addEventListener('submit', async (e) => {
   btn.disabled = true;
   try {
     await api('/credentials', { current: f.current.value, username: f.username.value.trim(), password: f.password.value });
-    f.reset(); toast('نام کاربری و رمز ذخیره شد');
-    boot();
+    f.reset(); toast('نام کاربری و رمز ذخیره شد'); boot();
   } catch (err) { msg.textContent = err.code === 'login' ? 'نشست تمام شده؛ دوباره وارد شوید.' : err.message; if (err.status === 401) show('login'); }
   finally { btn.disabled = false; }
 });
-
 $('#logout').addEventListener('click', async () => {
   try { await api('/logout', {}); } catch {}
   state.users = []; state.me = null; location.hash = ''; show('login');
 });
 
-// list
+// ---------- user list
 async function loadUsers() {
   $('#rows').replaceChildren(h('tr', {}, h('td', { colspan: 7, class: 'spin' }, 'در حال بارگذاری…')));
   try { state.users = await api('/users'); renderList(); }
   catch (err) { toast(err.message, true); $('#rows').replaceChildren(); }
 }
-
+const paidNow = (u) => u.plan !== 'free' && u.expires_at > Date.now();
+function renderTiles() {
+  const us = state.users.filter((u) => !u.admin);
+  const day = Date.now() - 864e5;
+  const tile = (k, v, s) => h('div', { class: 'card tile' }, h('div', { class: 'k' }, k), h('div', { class: 'v' }, v), h('div', { class: 's' }, s));
+  $('#tiles').replaceChildren(
+    tile('کاربران', fa(us.length), `${fa(us.filter((u) => (u.last_seen || 0) > day).length)} نفر فعال در ۲۴ ساعت`),
+    tile('اشتراک فعال', fa(us.filter(paidNow).length), `${fa(us.filter((u) => u.banned).length)} کاربر مسدود`),
+    tile('تلویزیون وصل', fa(us.filter((u) => u.tv).length), `از ${fa(us.length)} کاربر`),
+    tile('فضای مصرفی کاربران', size(us.reduce((a, u) => a + (u.used || 0), 0)), `${fa(us.reduce((a, u) => a + (u.files || 0), 0))} فایل`),
+  );
+}
 const SORTERS = {
   name: (u) => (u.first_name || u.username || String(u.id)).toLocaleLowerCase('fa'),
   plan: (u) => (u.quota == null ? Infinity : u.quota),
@@ -391,21 +528,21 @@ const SORTERS = {
 };
 function filtered() {
   const q = state.q.trim().toLowerCase().replace(/^@/, '');
-  const fnum = q.replace(/[۰-۹]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d));
-  let list = state.users.filter((u) => {
-    const paid = u.plan !== 'free' && u.expires_at > Date.now();
-    if (state.filter === 'paid' && !paid) return false;
-    if (state.filter === 'free' && (paid || u.admin)) return false;
+  const qn = q.replace(/[۰-۹]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d));
+  const list = state.users.filter((u) => {
+    if (state.filter === 'paid' && !paidNow(u)) return false;
+    if (state.filter === 'free' && (paidNow(u) || u.admin)) return false;
     if (state.filter === 'tv' && !u.tv) return false;
     if (state.filter === 'banned' && !u.banned) return false;
     if (!q) return true;
-    return (u.first_name || '').toLowerCase().includes(q) || (u.username || '').toLowerCase().includes(q) || String(u.id).includes(fnum);
+    return (u.first_name || '').toLowerCase().includes(q) || (u.username || '').toLowerCase().includes(q) || String(u.id).includes(qn);
   });
   const key = SORTERS[state.sort] || SORTERS.last_seen;
   list.sort((a, b) => { const x = key(a), y = key(b); return (x < y ? -1 : x > y ? 1 : 0) * (state.asc ? 1 : -1); });
   return list;
 }
 function renderList() {
+  renderTiles();
   const list = filtered();
   $('#count').textContent = `${fa(list.length)} از ${fa(state.users.length)} کاربر`;
   $('#none').classList.toggle('hidden', list.length > 0);
@@ -413,19 +550,20 @@ function renderList() {
     th.classList.toggle('sorted', th.dataset.s === state.sort);
     th.classList.toggle('asc', th.dataset.s === state.sort && state.asc);
   });
-  $('#sort').value = SORTERS[state.sort] && [...$('#sort').options].some((o) => o.value === state.sort) ? state.sort : $('#sort').value;
+  if ([...$('#sort').options].some((o) => o.value === state.sort)) $('#sort').value = state.sort;
   $('#dir').textContent = state.asc ? 'صعودی' : 'نزولی';
-  $('#rows').replaceChildren(...list.map((u) => h('tr', { tabindex: 0, onclick: () => (location.hash = '#/u/' + u.id), onkeydown: (e) => { if (e.key === 'Enter') location.hash = '#/u/' + u.id; } },
-    h('td', { class: 'c-name' },
-      h('div', { class: 'name' }, u.first_name || '—', u.banned ? ' ' : '', u.banned ? h('span', { class: 'badge bad' }, 'مسدود') : null),
-      h('div', { class: 'sub' }, u.username ? h('span', { class: 'ltrnum' }, '@' + u.username) : null, u.username ? ' · ' : '', h('span', { class: 'ltrnum' }, String(u.id)))),
-    h('td', { class: 'c-plan' }, planBadge(u), u.expires_at ? h('div', { class: 'sub' }, 'تا ' + date(u.expires_at)) : null),
-    h('td', { class: 'c-space' }, h('div', { class: 'sub' }, `${size(u.used)} از ${size(u.quota)}`), meter(u.used, u.quota)),
+  const go = (u) => () => { location.hash = '#/u/' + u.id; };
+  $('#rows').replaceChildren(...list.map((u) => h('tr', { tabindex: 0, onclick: go(u), onkeydown: (e) => { if (e.key === 'Enter') go(u)(); } },
+    h('td', { class: 'c-name' }, h('div', { class: 'who' }, avatar(u),
+      h('div', { style: null }, h('div', { class: 'name' }, userName(u), u.banned ? ' ' : '', u.banned ? h('span', { class: 'badge bad' }, 'مسدود') : null),
+        h('div', { class: 'faint' }, u.username ? h('span', { class: 'ltr' }, '@' + u.username) : null, u.username ? ' · ' : '', h('span', { class: 'ltr' }, String(u.id)))))),
+    h('td', { class: 'c-plan' }, planBadge(u), u.expires_at ? h('div', { class: 'faint' }, 'تا ' + date(u.expires_at)) : null),
+    h('td', { class: 'c-space' }, h('div', { class: 'faint' }, `${size(u.used)} از ${size(u.quota)}`), meter(u.used, u.quota)),
     h('td', { class: 'c-wide' }, fa(u.files)),
-    h('td', { class: 'c-wide' }, u.tv ? h('span', { class: 'badge ok' }, 'وصل') : h('span', { class: 'sub' }, '—')),
-    h('td', { class: 'c-wide sub' }, date(u.created_at)),
-    h('td', { class: 'c-wide sub' }, ago(u.last_seen || u.created_at)),
-    h('td', { class: 'c-extra' }, `${fa(u.files)} فایل · ${u.tv ? '📺 تلویزیون وصل · ' : ''}فعالیت: ${ago(u.last_seen || u.created_at)}`),
+    h('td', { class: 'c-wide' }, u.tv ? h('span', { class: 'badge cyan' }, 'وصل') : h('span', { class: 'faint' }, '—')),
+    h('td', { class: 'c-wide faint' }, date(u.created_at)),
+    h('td', { class: 'c-wide faint' }, ago(u.last_seen || u.created_at)),
+    h('td', { class: 'c-extra faint' }, `${fa(u.files)} فایل · ${u.tv ? 'تلویزیون وصل · ' : ''}فعالیت: ${ago(u.last_seen || u.created_at)}`),
   )));
 }
 $('#q').addEventListener('input', (e) => { state.q = e.target.value; renderList(); });
@@ -439,100 +577,161 @@ document.querySelectorAll('table.users th').forEach((th) => th.addEventListener(
 $('#chips').addEventListener('click', (e) => {
   const c = e.target.closest('.chip'); if (!c) return;
   state.filter = c.dataset.f;
-  document.querySelectorAll('.chip').forEach((x) => x.classList.toggle('on', x === c));
+  document.querySelectorAll('#chips .chip').forEach((x) => x.classList.toggle('on', x === c));
   renderList();
 });
 
-// one user
+// ---------- one user
+let current = null;
 async function openUser(id) {
   show('user');
   const v = $('#v-user');
-  v.replaceChildren(h('div', { class: 'spin' }, 'در حال بارگذاری…'));
-  window.scrollTo(0, 0);
+  if (!current || current.id !== id) { state.fkind = 'all'; v.replaceChildren(h('div', { class: 'spin' }, 'در حال بارگذاری…')); window.scrollTo(0, 0); }
   try { renderUser(await api('/users/' + id)); }
   catch (err) { v.replaceChildren(backBtn(), h('div', { class: 'card pad empty' }, err.message)); }
 }
-const backBtn = () => h('button', { class: 'btn back', onclick: () => { location.hash = ''; } }, '→ بازگشت به فهرست');
-function stat(k, ...v) { return h('div', { class: 'card stat' }, h('div', { class: 'k' }, k), h('div', { class: 'v' }, ...v)); }
+const backBtn = () => h('button', { class: 'btn back', onclick: () => { location.hash = ''; } }, '→ همه‌ی کاربران');
+const stat = (k, ...v) => h('div', { class: 'card stat' }, h('div', { class: 'k' }, k), h('div', { class: 'v' }, ...v));
+
+async function act(u, action, text, danger) {
+  if (!(await confirmBox(text, 'بله، انجام شود', danger))) return;
+  try { const r = await api(`/users/${u.id}/action`, { action }); toast(r.note || 'انجام شد'); renderUser(r.user); }
+  catch (err) { toast(err.message, true); }
+}
+async function delFile(u, f, after) {
+  if (!(await confirmBox(`فایل «${f.name}» (${size(f.size)}) برای همیشه حذف شود؟ از فضای ذخیره و تلویزیون کاربر هم پاک می‌شود.`, 'حذف', true))) return;
+  try { const r = await api(`/users/${u.id}/files/${f.id}/delete`, {}); toast(r.note); after && after(); renderUser(r.user); }
+  catch (err) { toast(err.message, true); }
+}
+
+// "Film part 5.mp4" -> ["Film part 5", "MP4"]: the extension goes on the picture, so names read cleanly in RTL.
+function splitName(name) {
+  const m = /^(.+)\.([A-Za-z0-9]{1,5})$/.exec(name || '');
+  return m ? [m[1], m[2].toUpperCase()] : [name || '', ''];
+}
+function thumbBox(f) {
+  const kind = KIND[f.kind] ? f.kind : 'file';
+  const src = f.thumb || (kind === 'image' ? f.url : null);
+  const ph = h('div', { class: 'ph ' + kind }, icon(kind));
+  if (!src) return [ph];
+  const img = h('img', { alt: '', loading: 'lazy', decoding: 'async', referrerpolicy: 'no-referrer', src });
+  img.addEventListener('error', () => img.replaceWith(ph));
+  return [img];
+}
+function fileCard(u, f) {
+  const kind = KIND[f.kind] ? f.kind : 'file';
+  const ready = f.status === 'ready';
+  const del = h('button', { class: 'fdel', title: 'حذف', 'aria-label': 'حذف فایل', disabled: !['ready', 'failed'].includes(f.status),
+    onclick: (e) => { e.stopPropagation(); delFile(u, f); } }, icon('trash'));
+  return h('div', { class: 'fcard', tabindex: 0, title: f.name,
+    onclick: () => ready && viewFile(u, f), onkeydown: (e) => { if (e.key === 'Enter' && ready) viewFile(u, f); } },
+    h('div', { class: 'thumb' },
+      ...thumbBox(f),
+      h('div', { class: 'shade' }),
+      kind === 'video' && ready ? h('div', { class: 'play' }, icon('video')) : null,
+      h('div', { class: 'ov tr' }, h('span', { class: 'pill st-' + (f.storage === 'do' ? 'cf' : f.storage) }, STORAGE[f.storage] || f.storage),
+        !ready ? h('span', { class: 'pill ' + (f.status === 'failed' ? 'bad' : 'warn') }, f.status === 'failed' ? 'ناموفق' : 'در حال انتقال') : null),
+      h('div', { class: 'ov bl' }, f.duration ? h('span', { class: 'pill ltr' }, dur(f.duration)) : null,
+        splitName(f.name)[1] ? h('span', { class: 'pill' }, splitName(f.name)[1]) : null),
+      del),
+    h('div', { class: 'fbody' }, h('div', { class: 'fname', dir: 'auto' }, splitName(f.name)[0]),
+      h('div', { class: 'fmeta' }, h('span', {}, size(f.size)), h('span', {}, date(f.created_at)))));
+}
+
+function viewFile(u, f) {
+  const kind = KIND[f.kind] ? f.kind : 'file';
+  let stage;
+  if (f.url && kind === 'video') stage = h('video', { src: f.url, controls: true, autoplay: true, playsinline: true, preload: 'metadata', poster: f.thumb || null });
+  else if (f.url && kind === 'image') stage = h('img', { src: f.url, alt: f.name, referrerpolicy: 'no-referrer' });
+  else if (f.url && kind === 'audio') stage = h('audio', { src: f.url, controls: true, autoplay: true });
+  else stage = h('div', { class: 'ph ' + kind }, icon(kind));
+  const meta = [size(f.size), KIND[kind], f.width && f.height ? `${fa(f.width)}×${fa(f.height)}` : null, f.duration ? dur(f.duration) : null, date(f.created_at, true), STORAGE[f.storage]].filter(Boolean).join(' · ');
+  const close = modal(h('div', { class: 'viewer', role: 'dialog', 'aria-modal': 'true' },
+    h('div', { class: 'stage' }, stage),
+    h('div', { class: 'info' },
+      h('div', { class: 't' }, h('b', { dir: 'auto' }, f.name), h('span', { class: 'faint' }, meta)),
+      f.url ? h('a', { class: 'btn', href: f.url, target: '_blank', rel: 'noopener noreferrer' }, icon('ext'), 'باز کردن') : null,
+      h('button', { class: 'btn danger', onclick: () => delFile(u, f, () => close()) }, icon('trash'), 'حذف'),
+      h('button', { class: 'btn', onclick: () => close() }, icon('x'), 'بستن'))),
+    () => { if (stage.pause) stage.pause(); });
+}
+
+const FSORT = {
+  new: (a, b) => b.created_at - a.created_at, old: (a, b) => a.created_at - b.created_at,
+  big: (a, b) => b.size - a.size, small: (a, b) => a.size - b.size,
+  name: (a, b) => a.name.localeCompare(b.name, 'fa'), long: (a, b) => (b.duration || 0) - (a.duration || 0),
+};
+function filesSection(u) {
+  const counts = { all: u.files.length };
+  for (const f of u.files) { const k = KIND[f.kind] ? f.kind : 'file'; counts[k] = (counts[k] || 0) + 1; }
+  const list = u.files.filter((f) => state.fkind === 'all' || (KIND[f.kind] ? f.kind : 'file') === state.fkind).sort(FSORT[state.fsort] || FSORT.new);
+  const chips = h('div', { class: 'chips' }, ...[['all', 'همه'], ['video', 'ویدیو'], ['image', 'تصویر'], ['audio', 'صوت'], ['file', 'فایل']]
+    .filter(([k]) => k === 'all' || counts[k])
+    .map(([k, t]) => h('button', { class: 'chip' + (state.fkind === k ? ' on' : ''), onclick: () => { state.fkind = k; renderUser(u); } }, t, h('span', { class: 'n' }, fa(counts[k] || 0)))));
+  const sort = h('select', { class: 'in', 'aria-label': 'مرتب‌سازی فایل‌ها', onchange: (e) => { state.fsort = e.target.value; renderUser(u); } },
+    ...[['new', 'جدیدترین'], ['old', 'قدیمی‌ترین'], ['big', 'بزرگ‌ترین'], ['small', 'کوچک‌ترین'], ['long', 'طولانی‌ترین'], ['name', 'نام']]
+      .map(([v, t]) => h('option', { value: v, selected: state.fsort === v }, t)));
+  return h('div', { class: 'card pad section' },
+    h('h3', {}, 'فایل‌ها', h('span', { class: 'badge' }, `${fa(u.files.length)} فایل · ${size(u.files.reduce((a, f) => a + (f.size || 0), 0))}`)),
+    u.files.length ? h('div', { class: 'ftools' }, chips, sort) : null,
+    list.length ? h('div', { class: 'files' }, ...list.map((f) => fileCard(u, f)))
+      : h('div', { class: 'empty' }, icon('folder'), 'فایلی نیست.'));
+}
 
 function renderUser(u) {
-  // keep the list in sync without reloading it
+  current = u;
   const i = state.users.findIndex((x) => x.id === u.id);
   if (i >= 0) state.users[i] = { ...state.users[i], plan: u.plan, plan_title: u.plan_title, expires_at: u.expires_at, used: u.used, quota: u.quota,
     banned: u.banned, tv: !!u.tv, files: u.files.filter((f) => f.status === 'ready').length };
+  const name = userName(u);
+  const expired = u.expires_at && u.expires_at < Date.now();
 
-  const act = async (action, text, danger) => {
-    if (!(await confirmBox(text, 'بله، انجام شود', danger))) return;
-    try { const r = await api(`/users/${u.id}/action`, { action }); toast(r.note || 'انجام شد'); renderUser(r.user); }
-    catch (err) { toast(err.message, true); }
-  };
-  const name = u.first_name || (u.username ? '@' + u.username : String(u.id));
   const actions = u.admin
-    ? h('p', { class: 'sub' }, 'این حساب مدیر است و پلن و محدودیت ندارد.')
-    : h('div', { class: 'actions' },
-        h('button', { class: 'btn primary', disabled: u.plan === 'free', title: u.plan === 'free' ? 'برای کاربر رایگان یک پلن انتخاب کنید' : null,
-          onclick: () => act('ext', `اشتراک «${u.plan_title}» برای ${name} ۳۰ روز تمدید شود؟`) }, '➕ تمدید ۳۰ روز'),
-        h('span', { class: 'sep' }),
-        ...PLAN_ACTIONS.map(([p, t]) => h('button', { class: 'btn' + (u.plan === p ? ' primary' : ''),
-          onclick: () => act(p, p === 'free' ? `پلن ${name} رایگان شود؟ (اشتراک فعلی تمام می‌شود)` : `پلن ${name} به «${t}» برای ۳۰ روز از امروز تغییر کند؟ به کاربر پیام داده می‌شود.`, p === 'free') }, t)),
-        h('span', { class: 'sep' }),
-        u.banned
-          ? h('button', { class: 'btn', onclick: () => act('unban', `مسدودی ${name} برداشته شود؟`) }, '✅ رفع مسدودی')
-          : h('button', { class: 'btn danger', onclick: () => act('ban', `${name} مسدود شود؟`, true) }, '⛔️ مسدود کردن'),
-        h('button', { class: 'btn danger', disabled: !u.tv, onclick: () => act('tvoff', `تلویزیون ${name} قطع شود؟`, true) }, '🔌 قطع تلویزیون'));
+    ? h('p', { class: 'muted' }, 'این حساب مدیر است و پلن و محدودیت ندارد.')
+    : h('div', { class: 'acts' },
+        h('div', { class: 'grp' }, h('span', {}, 'اشتراک فعلی'),
+          h('div', { class: 'row' }, h('button', { class: 'btn primary', disabled: u.plan === 'free', title: u.plan === 'free' ? 'برای کاربر رایگان یک پلن انتخاب کنید' : null,
+            onclick: () => act(u, 'ext', `اشتراک «${u.plan_title}» برای ${name} ۳۰ روز تمدید شود؟`) }, '＋ تمدید ۳۰ روز'))),
+        h('div', { class: 'grp' }, h('span', {}, 'پلن جدید (۳۰ روز از امروز)'),
+          h('div', { class: 'row' }, h('div', { class: 'seg' }, ...PLAN_ACTIONS.map(([p, t]) => h('button', { class: 'btn' + (u.plan === p ? ' on' : ''),
+            onclick: () => act(u, p, `پلن ${name} به «${t}» برای ۳۰ روز از امروز تغییر کند؟ به کاربر پیام داده می‌شود.`) }, t))),
+            h('button', { class: 'btn' + (u.plan === 'free' ? ' on' : ''), onclick: () => act(u, 'free', `پلن ${name} رایگان شود؟ (اشتراک فعلی تمام می‌شود)`, true) }, 'رایگان'))),
+        h('div', { class: 'grp' }, h('span', {}, 'دسترسی'),
+          h('div', { class: 'row' },
+            u.banned ? h('button', { class: 'btn', onclick: () => act(u, 'unban', `مسدودی ${name} برداشته شود؟`) }, '✓ رفع مسدودی')
+              : h('button', { class: 'btn danger', onclick: () => act(u, 'ban', `${name} مسدود شود؟`, true) }, 'مسدود کردن'),
+            h('button', { class: 'btn danger', disabled: !u.tv, onclick: () => act(u, 'tvoff', `تلویزیون ${name} قطع شود؟`, true) }, 'قطع تلویزیون'))));
 
-  const delFile = async (f) => {
-    if (!(await confirmBox(`فایل «${f.name}» (${size(f.size)}) برای همیشه حذف شود؟ از فضای ذخیره و تلویزیون کاربر هم پاک می‌شود.`, 'حذف', true))) return;
-    try { const r = await api(`/users/${u.id}/files/${f.id}/delete`, {}); toast(r.note); renderUser(r.user); }
-    catch (err) { toast(err.message, true); }
-  };
-  const files = u.files.length
-    ? h('div', { class: 'scroll' }, h('table', { class: 'list files' },
-        h('thead', {}, h('tr', {}, h('th', {}, 'نام'), h('th', {}, 'حجم'), h('th', {}, 'تاریخ'), h('th', {}, 'محل ذخیره'), h('th', {}))),
-        h('tbody', {}, ...u.files.map((f) => h('tr', {},
-          h('td', { class: 'fname' }, f.url ? h('a', { href: f.url, target: '_blank', rel: 'noopener noreferrer' }, f.name) : f.name, ' ', h('span', { class: 'sub' }, KIND[f.kind] || ''),
-            f.status !== 'ready' ? h('span', { class: 'badge ' + (f.status === 'failed' ? 'bad' : 'warn') }, STATUS[f.status] || 'در حال انتقال') : null),
-          h('td', { class: 'sub' }, size(f.size)),
-          h('td', { class: 'sub' }, date(f.created_at, true)),
-          h('td', { class: 'sub' }, STORAGE[f.storage] || f.storage),
-          h('td', { class: 'fbtns' },
-            f.url ? h('a', { class: 'btn small', href: f.url, target: '_blank', rel: 'noopener noreferrer' }, 'باز کردن') : null,
-            h('button', { class: 'btn small danger', disabled: !['ready', 'failed'].includes(f.status), onclick: () => delFile(f) }, 'حذف')))))))
-    : h('div', { class: 'sub' }, 'فایلی ندارد.');
   const pays = u.payments.length
-    ? h('div', { class: 'scroll' }, h('table', { class: 'list' },
-        h('thead', {}, h('tr', {}, h('th', {}, 'شماره'), h('th', {}, 'پلن'), h('th', {}, 'مبلغ'), h('th', {}, 'وضعیت'), h('th', {}, 'تاریخ'))),
-        h('tbody', {}, ...u.payments.map((p) => h('tr', {},
-          h('td', { class: 'sub' }, fa(p.id)),
-          h('td', {}, p.plan.replace(/^p/, '').replace('g', ' گیگ'), p.months > 1 ? ` · ${fa(p.months)} ماه` : ''),
-          h('td', {}, fa(p.amount), ' تومان'),
-          h('td', {}, h('span', { class: 'badge ' + (PAY[p.status]?.[1] || '') }, PAY[p.status]?.[0] || p.status)),
-          h('td', { class: 'sub' }, date(p.created_at, true)))))))
-    : h('div', { class: 'sub' }, 'پرداختی ندارد.');
+    ? h('div', { class: 'plist' }, ...u.payments.map((p) => h('div', { class: 'prow' },
+        h('span', { class: 'badge ' + (PAY[p.status]?.[1] || '') }, PAY[p.status]?.[0] || p.status),
+        h('span', {}, p.plan.replace(/^p/, '').replace('g', ' گیگ'), p.months > 1 ? ` · ${fa(p.months)} ماه` : ''),
+        h('span', { class: 'faint' }, date(p.created_at, true)),
+        h('span', { class: 'amt' }, fa(p.amount), ' تومان'))))
+    : h('div', { class: 'faint' }, 'پرداختی ندارد.');
 
   $('#v-user').replaceChildren(
     backBtn(),
-    h('div', { class: 'head' },
-      h('div', {}, h('h2', {}, name, ' ', u.banned ? h('span', { class: 'badge bad' }, 'مسدود') : null),
-        h('div', { class: 'sub' }, u.username ? h('span', { class: 'ltrnum' }, '@' + u.username) : null, u.username ? ' · ' : '', 'شناسه ', h('span', { class: 'ltrnum' }, String(u.id)))),
-      h('button', { class: 'btn small', onclick: () => openUser(u.id) }, '↻ بارگذاری دوباره')),
+    h('div', { class: 'card pad hero' },
+      avatar(u, true),
+      h('div', { class: 'id' },
+        h('h2', {}, name, planBadge(u), u.banned ? h('span', { class: 'badge bad' }, 'مسدود') : null, u.tv ? h('span', { class: 'badge cyan' }, 'تلویزیون وصل') : null),
+        h('div', { class: 'faint' }, u.username ? h('span', { class: 'ltr' }, '@' + u.username) : null, u.username ? ' · ' : '', 'شناسه ', h('span', { class: 'ltr' }, String(u.id)))),
+      h('div', { class: 'space' },
+        h('div', { class: 'nums' }, h('span', {}, 'فضای مصرفی'), h('span', {}, `${size(u.used)} از ${size(u.quota)}`)), meter(u.used, u.quota))),
     h('div', { class: 'grid' },
-      stat('پلن', planBadge(u)),
-      stat('پایان اشتراک', u.expires_at ? date(u.expires_at) : '—', u.expires_at && u.expires_at < Date.now() ? h('span', { class: 'sub' }, ' (تمام شده)') : null),
-      stat('فضا', `${size(u.used)} از ${size(u.quota)}`, meter(u.used, u.quota)),
-      stat('فایل‌ها', fa(u.files.filter((f) => f.status === 'ready').length)),
-      stat('تلویزیون', u.tv ? `وصل از ${date(u.tv.since)}` : '—'),
+      stat('پایان اشتراک', u.expires_at ? date(u.expires_at) : '—', expired ? h('span', { class: 'faint' }, ' (تمام شده)') : null),
+      stat('تلویزیون', u.tv ? `از ${date(u.tv.since)}` : 'وصل نیست'),
       stat('عضویت', date(u.created_at)),
       stat('آخرین فعالیت', ago(u.last_seen || u.created_at)),
       stat('قوانین', u.terms_at ? `پذیرفته (${date(u.terms_at)})` : 'نپذیرفته'),
-      u.referred_by ? stat('دعوت‌شده توسط', h('a', { href: '#/u/' + u.referred_by, class: 'ltrnum' }, String(u.referred_by))) : null),
+      u.referred_by ? stat('دعوت‌شده توسط', h('a', { href: '#/u/' + u.referred_by, class: 'ltr' }, String(u.referred_by))) : null),
     h('div', { class: 'card pad section' }, h('h3', {}, 'عملیات'), actions),
-    h('div', { class: 'card pad section' }, h('h3', {}, `فایل‌ها (${fa(u.files.length)})`), files),
-    h('div', { class: 'card pad section' }, h('h3', {}, `پرداخت‌ها (${fa(u.payments.length)})`), pays),
+    filesSection(u),
+    h('div', { class: 'card pad section' }, h('h3', {}, 'پرداخت‌ها', h('span', { class: 'badge' }, fa(u.payments.length))), pays),
   );
 }
 
-// start
 boot();
 </script>
 </body>

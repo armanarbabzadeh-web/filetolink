@@ -87,7 +87,15 @@ async function fileUrl(store, f) {
   if (f.storage === 'arvan') return store.publicUrl(f.obj_key || store.fileKey(f));
   if ((f.storage === 'cf' || f.storage === 'do') && store.ownDomain()) return store.ownLink(f, 'c');
   if (f.storage === 'vps' && store.ownDomain()) return store.ownLink(f, 'v');
+  if (f.storage === 'remote') return f.source_url || null;
   return null;
+}
+
+// Preview picture, the same one the TV app shows.
+async function thumbUrl(store, f) {
+  if (f.status !== 'ready') return null;
+  if (f.storage === 'cf' || f.storage === 'do' || f.storage === 'vps') return f.has_thumb && store.ownDomain() ? store.ownLink(f, 't') : null;
+  return f.thumb_key ? store.publicUrl(f.thumb_key) : null;
 }
 
 async function userDetail(store, uid) {
@@ -95,8 +103,13 @@ async function userDetail(store, uid) {
   if (!u) return null;
   const lim = store.limits(u);
   const tv = store.one('SELECT created_at, last_seen FROM devices WHERE user_id=?', uid);
-  const files = store.q('SELECT id, name, size, kind, status, storage, obj_key, created_at FROM files WHERE owner=? ORDER BY created_at DESC', uid);
-  for (const f of files) { f.url = await fileUrl(store, f); delete f.obj_key; }
+  const files = store.q(`SELECT id, name, mime, size, kind, status, storage, obj_key, thumb_key, source_url, width, height, duration, created_at,
+      thumb IS NOT NULL AS has_thumb FROM files WHERE owner=? ORDER BY created_at DESC`, uid);
+  for (const f of files) {
+    f.url = await fileUrl(store, f);
+    f.thumb = await thumbUrl(store, f);
+    for (const k of ['obj_key', 'thumb_key', 'source_url', 'has_thumb']) delete f[k];
+  }
   return {
     id: u.id, first_name: u.first_name, username: u.username, plan: u.plan, plan_title: lim.title,
     expires_at: u.plan !== 'free' ? u.expires_at : null, used: store.userUsed(uid), quota: quotaOf(lim.quota),
