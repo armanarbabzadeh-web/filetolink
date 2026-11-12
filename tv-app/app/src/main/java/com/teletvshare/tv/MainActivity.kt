@@ -40,7 +40,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         android.util.Log.i("TeleTVShare", "main onCreate manifest=${Prefs.manifest(this) != null}")
         manifestUrl = Prefs.manifest(this) ?: return unlinked(null)
-        setContentView(R.layout.activity_main)
+        setContentView(if (Device.isPhone(this)) R.layout.activity_main_phone else R.layout.activity_main)
         findViewById<TextView>(R.id.brand).text = PairActivity.brand(this)
         grid = findViewById(R.id.grid)
         empty = findViewById(R.id.empty)
@@ -54,7 +54,7 @@ class MainActivity : AppCompatActivity() {
         findViewById<TextView>(R.id.emptyBody).text = getString(R.string.empty_body, BuildConfig.BOT_USERNAME)
 
         adapter = FileAdapter(::open, ::menu)
-        grid.layoutManager = GridLayoutManager(this, 4)
+        grid.layoutManager = GridLayoutManager(this, Device.columns(this))
         grid.adapter = adapter
 
         tabs = listOf(

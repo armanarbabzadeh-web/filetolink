@@ -24,7 +24,7 @@ class FileAdapter(private val onOpen: (FileItem) -> Unit, private val onMenu: (F
     override fun getItemId(position: Int) = items[position].id.hashCode().toLong()
     override fun getItemCount() = items.size
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) =
-        VH(LayoutInflater.from(parent.context).inflate(R.layout.item_file, parent, false))
+        VH(LayoutInflater.from(parent.context).inflate(if (Device.isPhone(parent.context)) R.layout.item_file_phone else R.layout.item_file, parent, false))
     override fun onBindViewHolder(h: VH, position: Int) = h.bind(items[position])
 
     inner class VH(v: View) : RecyclerView.ViewHolder(v) {

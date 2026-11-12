@@ -38,7 +38,12 @@ class PairActivity : AppCompatActivity() {
         }
         code = savedInstanceState?.getString("code")
         codeUntil = savedInstanceState?.getLong("until") ?: 0L
-        setContentView(R.layout.activity_pair)
+        setContentView(if (Device.isPhone(this)) R.layout.activity_pair_phone else R.layout.activity_pair)
+        // phone: pair with the Telegram app on this same phone (a QR can't be scanned by itself)
+        findViewById<TextView>(R.id.openTelegram)?.setOnClickListener {
+            val c = code ?: return@setOnClickListener
+            runCatching { startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(Api.pairLink(c)))) }
+        }
         findViewById<TextView>(R.id.brand).text = brand(this)
         findViewById<TextView>(R.id.step2).text = getString(R.string.pair_step2, BuildConfig.BOT_USERNAME)
         Prefs.takeReason(this)?.let { findViewById<TextView>(R.id.status).text = it }
