@@ -28,6 +28,8 @@ import java.net.URL
  */
 object Updater {
     private const val VERSION_URL = "${BuildConfig.ARVAN_URL}/app/version.json"
+    /** Only the owner's TV also looks here (builds that are just for him). */
+    private const val OWNER_URL = "${BuildConfig.ARVAN_URL}/app/version-owner.json"
     private var lastCheck = 0L
     private var skipped = 0   // version code the user chose "later" for, in this run of the app
     private var showing = false
@@ -40,8 +42,9 @@ object Updater {
         if (now - lastCheck < 30 * 60_000L && lastCheck != 0L) return
         lastCheck = now
         a.lifecycleScope.launch {
-            val info = runCatching { fetch() }.onFailure { android.util.Log.w("TeleTVShare", "update check failed", it) }.getOrNull()
-                ?: return@launch
+            val pub = runCatching { fetch(VERSION_URL) }.onFailure { android.util.Log.w("TeleTVShare", "update check failed", it) }.getOrNull()
+            val own = if (Prefs.ownerChannel(a)) runCatching { fetch(OWNER_URL) }.getOrNull() else null
+            val info = listOfNotNull(pub, own).maxByOrNull { it.code } ?: return@launch
             val mine = BuildConfig.VERSION_CODE
             if (info.code <= mine || a.isFinishing) return@launch
             val required = mine < info.minCode
@@ -50,8 +53,8 @@ object Updater {
         }
     }
 
-    private suspend fun fetch(): Info = withContext(Dispatchers.IO) {
-        val (status, body) = Net.get(VERSION_URL)
+    private suspend fun fetch(url: String): Info = withContext(Dispatchers.IO) {
+        val (status, body) = Net.get(url)
         check(status == 200) { "HTTP $status" }
         val j = JSONObject(body)
         Info(j.getInt("code"), j.optString("name"), j.getString("url"), j.optLong("size"), j.optInt("min_code", 0), j.optString("notes"))

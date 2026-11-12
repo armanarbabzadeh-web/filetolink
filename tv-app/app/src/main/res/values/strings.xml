@@ -63,6 +63,8 @@
     <string name="store_cf">☁️ Cloudflare</string>
     <string name="store_vps">🖥 VPS</string>
     <string name="unlimited">نامحدود</string>
+    <string name="view_all">نمایش کامل</string>
+    <string name="view_normal">نمایش عادی</string>
     <string name="pair_wait">منتظر تأیید از تلگرام…</string>
     <string name="pair_err_tls">⚠️ اتصال امن به سرور برقرار نشد. تاریخ و ساعت تلویزیون را از تنظیمات درست کنید (حالت خودکار).</string>
     <string name="pair_err_net">⚠️ تلویزیون به سرور وصل نمی‌شود. اینترنت تلویزیون را بررسی کنید؛ اگر VPN روشن است، خاموشش کنید.</string>

@@ -24,6 +24,7 @@ import kotlin.math.roundToLong
 data class FileItem(
     val id: String, val name: String, val size: Long, val kind: String,
     val duration: Int, val createdAt: Long, val url: String, val thumb: String?,
+    val storage: String? = null,
 )
 
 /** One of the owner's storages, for the usage chart (cap null = unlimited). */
@@ -34,6 +35,8 @@ data class Manifest(
     val used: Long, val quota: Long?, val blocked: Boolean, val reportUrl: String?,
     val files: List<FileItem>, val deleteUrl: String? = null,
     val stores: List<Store> = emptyList(),
+    /** Owner only: show just Arvan files until the hidden switch is used. */
+    val ownerView: Boolean = false,
 )
 
 class UnlinkedException : RuntimeException("unlinked")
@@ -56,6 +59,8 @@ object Prefs {
     fun setPendingDeletes(ctx: Context, ids: Set<String>) = p(ctx).edit().putStringSet("pending_del", ids).apply()
     fun sort(ctx: Context) = p(ctx).getInt("sort", 0)
     fun setSort(ctx: Context, s: Int) = p(ctx).edit().putInt("sort", s).apply()
+    fun ownerChannel(ctx: Context) = p(ctx).getBoolean("owner_channel", false)
+    fun setOwnerChannel(ctx: Context, on: Boolean) = p(ctx).edit().putBoolean("owner_channel", on).apply()
     fun external(ctx: Context) = p(ctx).getBoolean("external", false)
     fun setExternal(ctx: Context, on: Boolean) = p(ctx).edit().putBoolean("external", on).apply()
 }
@@ -130,6 +135,7 @@ object Api {
             blocked = w?.optBoolean("blocked") ?: false,
             reportUrl = j.optString("report_url").takeIf { it.startsWith("http") },
             deleteUrl = j.optString("delete_url").takeIf { it.startsWith("http") },
+            ownerView = j.optBoolean("private", false),
             stores = j.optJSONArray("stores")?.let { a ->
                 (0 until a.length()).map { i ->
                     val s = a.getJSONObject(i)
@@ -143,6 +149,7 @@ object Api {
                     kind = f.optString("kind", "file"), duration = f.optInt("duration", 0),
                     createdAt = f.optLong("created_at"), url = f.getString("url"),
                     thumb = if (f.isNull("thumb")) null else f.optString("thumb"),
+                    storage = if (f.isNull("storage")) null else f.optString("storage"),
                 )
             },
         )

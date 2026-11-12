@@ -23,6 +23,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var ring: UsageRing
     private lateinit var sortBtn: TextView
     private var lastManifest: Manifest? = null
+    /** Owner's hidden switch (hold OK on the "All" tab): show every storage. Off again each time the app opens. */
+    private var showAll = false
     private lateinit var warn: View
     private lateinit var adapter: FileAdapter
     private lateinit var tabs: List<Pair<TextView, String?>>
@@ -63,6 +65,13 @@ class MainActivity : AppCompatActivity() {
             findViewById<TextView>(R.id.tabFile) to "file",
         )
         tabs.forEach { (v, kind) -> v.setOnClickListener { setFilter(kind) } }
+        tabs.first().first.setOnLongClickListener {
+            if (lastManifest?.ownerView != true) return@setOnLongClickListener false
+            showAll = !showAll
+            toast(getString(if (showAll) R.string.view_all else R.string.view_normal))
+            render(focusFirst = true)
+            true
+        }
         findViewById<View>(R.id.btnRefresh).setOnClickListener { refresh(true) }
         findViewById<View>(R.id.btnLogout).setOnClickListener { confirmLogout() }
         setFilter(intent.getStringExtra("filter"))
@@ -96,7 +105,7 @@ class MainActivity : AppCompatActivity() {
     // subtitle files are not shown on their own: they appear as subtitle tracks of the videos
     private fun visible(): List<FileItem> {
         val gone = Prefs.pendingDeletes(this)
-        val list = all.filter { it.id !in gone && !Subs.isSub(it) && (filter == null || it.kind == filter) }
+        val list = all.filter { it.id !in gone && !Subs.isSub(it) && (filter == null || it.kind == filter) && shown(it) }
         val byName = java.text.Collator.getInstance(java.util.Locale("fa"))
         return when (Prefs.sort(this)) {
             1 -> list.sortedBy { it.createdAt }
@@ -108,6 +117,9 @@ class MainActivity : AppCompatActivity() {
             else -> list.sortedByDescending { it.createdAt }
         }
     }
+
+    /** Owner in normal view: only files kept on Arvan. */
+    private fun shown(f: FileItem) = showAll || lastManifest?.ownerView != true || f.storage == null || f.storage == "arvan"
 
     private fun chooseSort() {
         val cur = Prefs.sort(this).coerceIn(0, SORTS.size - 1)
@@ -130,7 +142,7 @@ class MainActivity : AppCompatActivity() {
             val p = (24 * resources.displayMetrics.density).toInt()
             setPadding(p, p / 2, p, 0)
         }
-        val rows = if (m.stores.isNotEmpty()) m.stores else listOf(Store("plan", m.used, m.quota))
+        val rows = if (m.stores.isNotEmpty()) m.stores.filter { showAll || !m.ownerView || it.key == "arvan" } else listOf(Store("plan", m.used, m.quota))
         for (s in rows) {
             val name = getString(when (s.key) { "cf" -> R.string.store_cf; "vps" -> R.string.store_vps; "arvan" -> R.string.store_arvan; else -> R.string.store_plan })
             val txt = android.widget.TextView(this).apply {
@@ -195,10 +207,11 @@ class MainActivity : AppCompatActivity() {
             val quota = m.quota?.let { "‏ از ‏${Fmt.faSize(it)}" } ?: ""
             // isolate the (possibly Latin) name so it doesn't reorder the Persian text around it
             userChip.text = "‏${Fmt.faSize(m.used)}$quota‏   •   ⁨${m.userName}⁩"
+            Prefs.setOwnerChannel(this, m.ownerView)
             val ids = m.files.map { it.id }.toSet()
             val prev = known
             if (prev != null) {
-                val added = ids.count { it !in prev }
+                val added = m.files.count { it.id !in prev && shown(it) }
                 if (added > 0) toast(getString(R.string.new_files, Fmt.fa(added.toString())))
             }
             val first = prev == null

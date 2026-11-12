@@ -1572,6 +1572,8 @@ export class Store extends DurableObject {
       used: this.userUsed(uid),
       quota: Number.isFinite(lim.quota) ? lim.quota : null,
       // the owner's three storages, for the usage chart on his TV
+      // owner only: his TV shows only Arvan files until he flips a hidden switch in the app
+      private: this.isAdmin(uid) || undefined,
       stores: this.isAdmin(uid) ? [
         { key: 'arvan', used: this.userUsed(uid), cap: null },
         { key: 'cf', used: Math.max(0, CF_CAP - this.cfFree()), cap: CF_CAP },
@@ -1592,7 +1594,7 @@ export class Store extends DurableObject {
     for (const f of files) {
       const mine = f.storage === 'cf' || f.storage === 'vps';
       manifest.files.push({
-        id: f.id, name: f.name, mime: f.mime, size: f.size, kind: f.kind,
+        id: f.id, name: f.name, mime: f.mime, size: f.size, kind: f.kind, storage: this.isAdmin(uid) ? f.storage : undefined,
         width: f.width, height: f.height, duration: f.duration, created_at: f.created_at,
         url: f.storage === 'remote' ? f.source_url
           : mine ? (own ? await this.ownLink(f, f.storage === 'vps' ? 'v' : 'c') : this.cfUrl(f))
@@ -2389,7 +2391,7 @@ export class Store extends DurableObject {
     try { if (this.budget() > 4) await this.helperWatch(); } catch (e) { console.log('helper watch failed', e.stack || e); }
     try {
       // the owner's own domain was set or changed: rewrite his TV list right away
-      const dom = (this.ownDomain() || '') + '|stores'; // bump the suffix to force one rewrite of the owner's TV list
+      const dom = (this.ownDomain() || '') + '|private'; // bump the suffix to force one rewrite of the owner's TV list
       if ((this.meta('own_domain') || '') !== dom && this.budget() > 6) {
         await this.writeManifest(Number(this.env.OWNER_ID));
         this.meta('own_domain', dom);

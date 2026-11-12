@@ -23,8 +23,8 @@ android {
         applicationId = "com.teletvshare.tv"
         minSdk = 21
         targetSdk = 35
-        versionCode = 11
-        versionName = "3.8"
+        versionCode = 12
+        versionName = "3.9"
         buildConfigField("String", "ARVAN_URL", "\"https://teletvshare-files.s3.ir-central1.arvanstorage.ir\"")
         buildConfigField("String", "BOT_USERNAME", "\"Teletvsharepro_bot\"")
     }
