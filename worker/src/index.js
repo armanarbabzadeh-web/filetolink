@@ -221,6 +221,19 @@ export class Store extends DurableObject {
     this.addCols('users', { terms_at: 'INTEGER', ref_code: 'TEXT', referred_by: 'INTEGER', ref_rewarded: 'INTEGER NOT NULL DEFAULT 0' });
     this.addCols('welcomed', { gifted: 'INTEGER NOT NULL DEFAULT 1' });
     this.addCols('devices', { manifest_at: 'INTEGER', rep_month: 'TEXT', rep_bytes: 'INTEGER NOT NULL DEFAULT 0' });
+    const uniqueUser = this.q('PRAGMA index_list(devices)').some((i) => i.unique
+      && this.q(`PRAGMA index_info("${i.name}")`).some((c) => c.name === 'user_id'));
+    if (uniqueUser) {
+      this.sql.exec(`
+        CREATE TABLE devices_new(token TEXT PRIMARY KEY, user_id INTEGER NOT NULL, name TEXT, created_at INTEGER NOT NULL,
+          last_seen INTEGER, manifest_at INTEGER, rep_month TEXT, rep_bytes INTEGER NOT NULL DEFAULT 0);
+        INSERT INTO devices_new(token, user_id, name, created_at, last_seen, manifest_at, rep_month, rep_bytes)
+          SELECT token, user_id, name, created_at, last_seen, manifest_at, rep_month, rep_bytes FROM devices;
+        DROP TABLE devices;
+        ALTER TABLE devices_new RENAME TO devices;
+      `);
+    }
+    this.sql.exec('CREATE INDEX IF NOT EXISTS devices_user ON devices(user_id)');
     this.sql.exec('UPDATE files SET owner=? WHERE owner IS NULL', Number(env.OWNER_ID));
     this.sql.exec('CREATE INDEX IF NOT EXISTS files_owner ON files(owner, created_at)');
     // The web panel moved to the owner's VPS: drop what the old in-Worker panel kept here (nothing else).
@@ -786,14 +799,16 @@ export class Store extends DurableObject {
     if (this.one('SELECT 1 AS x FROM tv_pairs WHERE code=?', code)) {
       return this.send(chat, '❌ این کد قبلاً استفاده شده. اپ تلویزیون را دوباره باز کنید تا کد جدید بدهد.', this.menuKeyboard());
     }
-    const old = this.one('SELECT * FROM devices WHERE user_id=?', user.id);
+    const many = this.isAdmin(user.id); // the owner may use any number of TVs
+    const old = many ? null : this.one('SELECT * FROM devices WHERE user_id=?', user.id);
     if (old) await this.removeDevice(old);
     const token = randomId(40);
     this.sql.exec('INSERT INTO devices(token, user_id, name, created_at) VALUES (?,?,?,?)', token, user.id, 'Android TV', Date.now());
     await this.writeManifest(user.id);
     this.sql.exec('INSERT INTO tv_pairs(code, created_at, user_id) VALUES (?,?,?)', code, Date.now(), user.id);
     await this.putJson(`p/${code}.json`, { manifest: this.publicUrl(`m/${token}.json`), user: user.first_name || '' });
-    return this.send(chat, `📺 تلویزیون به حساب شما وصل شد.${old ? '\nتلویزیون قبلی قطع شد.' : ''}\nفایل‌هایی که اینجا می‌فرستید روی تلویزیون نمایش داده می‌شوند.`, this.menuKeyboard());
+    const count = this.one('SELECT COUNT(*) AS c FROM devices WHERE user_id=?', user.id).c;
+    return this.send(chat, `📺 تلویزیون به حساب شما وصل شد.${old ? '\nتلویزیون قبلی قطع شد.' : ''}${many && count > 1 ? `\nالان ${faNum(count)} تلویزیون به حساب شما وصل است.` : ''}\nفایل‌هایی که اینجا می‌فرستید روی تلویزیون نمایش داده می‌شوند.`, this.menuKeyboard());
   }
 
   async removeDevice(d) {
@@ -1545,6 +1560,13 @@ export class Store extends DurableObject {
         kb: [[{ text: '🔢 وارد کردن کد تلویزیون', callback_data: 'tc' }], [{ text: '📲 دریافت اپ و راهنمای نصب', callback_data: 'app' }]],
       };
     }
+    if (this.isAdmin(user.id)) {
+      const n = this.one('SELECT COUNT(*) AS c FROM devices WHERE user_id=?', user.id).c;
+      return {
+        text: `📺 ${faNum(n)} تلویزیون به حساب شما وصل است (برای شما محدودیتی در تعداد نیست).\nبا وصل کردن تلویزیون جدید، قبلی‌ها وصل می‌مانند.`,
+        kb: [[{ text: '🔢 وصل کردن تلویزیون دیگر', callback_data: 'tc' }], [{ text: '🔌 قطع همه تلویزیون‌ها', callback_data: 'tu' }]],
+      };
+    }
     return {
       text: `📺 یک تلویزیون از ${fmtDate(d.created_at)} به حساب شما وصل است.\nبا وصل کردن تلویزیون دیگر، این یکی خودکار قطع می‌شود.`,
       kb: [[{ text: '🔌 قطع این تلویزیون', callback_data: 'tu' }], [{ text: '🔢 وصل کردن تلویزیون دیگر', callback_data: 'tc' }]],
@@ -1558,8 +1580,10 @@ export class Store extends DurableObject {
 
   // Rewrite the paired TV's manifest (file list, plan, viewing cap, report URL).
   async writeManifest(uid) {
-    const d = this.one('SELECT * FROM devices WHERE user_id=?', uid);
-    if (!d) return;
+    for (const d of this.q('SELECT * FROM devices WHERE user_id=?', uid)) await this.writeManifestOne(d, uid);
+  }
+
+  async writeManifestOne(d, uid) {
     const u = this.user(uid);
     const lim = this.limits(u);
     const mu = this.monthUsage(u);
@@ -1866,8 +1890,7 @@ export class Store extends DurableObject {
       case 'se_end': this.setState(user.id, null); await this.send(chatId, 'گفتگو با پشتیبانی بسته شد. هر وقت سؤالی داشتید، دوباره «💬 پشتیبانی» را بزنید.', this.menuKeyboard()); return answer();
       case 'tc': this.setState(user.id, 'tv'); await this.send(chatId, '🔢 کد ۸ حرفی که روی صفحه تلویزیون است را بفرستید:'); return answer();
       case 'tu': {
-        const d = this.one('SELECT * FROM devices WHERE user_id=?', user.id);
-        if (d) await this.removeDevice(d);
+        for (const d of this.q('SELECT * FROM devices WHERE user_id=?', user.id)) await this.removeDevice(d);
         const v = this.tvStatus(user);
         await this.edit(chatId, msgId, v.text, v.kb);
         return answer('تلویزیون قطع شد');
@@ -2323,8 +2346,7 @@ export class Store extends DurableObject {
       this.sql.exec('UPDATE users SET banned=? WHERE id=?', action === 'ban' ? 1 : 0, target.id);
       note = action === 'ban' ? 'مسدود شد' : 'آزاد شد';
     } else if (action === 'tvoff') {
-      const d = this.one('SELECT * FROM devices WHERE user_id=?', target.id);
-      if (d) await this.removeDevice(d);
+      for (const d of this.q('SELECT * FROM devices WHERE user_id=?', target.id)) await this.removeDevice(d);
       note = 'تلویزیون قطع شد';
     } else return { ok: false, error: 'عملیات نامعتبر' };
     await this.writeManifest(target.id);
@@ -2478,7 +2500,7 @@ export class Store extends DurableObject {
     this.sql.exec('DELETE FROM seen2 WHERE at < ?', now - 3 * DAY);
     this.sql.exec(`DELETE FROM files WHERE status IN ('link_choose','link_probe','link_pending','store_pending','dup_pending') AND created_at < ?`, now - 6 * 3600e3);
     this.sql.exec('DELETE FROM seen');
-    this.sql.exec('DELETE FROM pairs');
+    try { this.sql.exec('DELETE FROM pairs'); } catch { /* table from the first version; missing in new databases */ }
     for (const p of this.q('SELECT code FROM tv_pairs WHERE created_at < ? LIMIT 10', now - PAIR_TTL)) {
       if (low()) return true;
       await this.s3del(`p/${p.code}.json`);
