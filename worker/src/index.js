@@ -12,6 +12,7 @@ import { AwsClient } from 'aws4fetch';
 import { vpsPanel } from './vpspanel.js';
 
 const CHUNK = 1_900_000;              // in-DO storage chunk (owner's Cloudflare storage)
+const BUILD = '2026-11-13b';           // shown in /api/admin/helper, to see when a deploy is really live
 const VPS_CAP = 5 * 1024 ** 3;          // owner's storage on the VPS disk (default; wrangler.toml VPS_CAP_GB overrides)
 const CF_CAP = 4_600_000_000;         // free plan: 5 GB of Durable Object storage per account
 const TG_BOT_MAX = 20 * 1024 * 1024;  // Bot API getFile limit; bigger files go to the helper
@@ -1563,6 +1564,7 @@ export class Store extends DurableObject {
 
   helperStatus() {
     return {
+      build: BUILD,
       vps_seen: Number(this.meta('vps_seen') || 0) || null, vps_alive: this.vpsAlive(), vps_down: !!this.meta('vps_down'),
       gh_woke: Number(this.meta('gh_woke') || 0) || null, open_since: Number(this.meta('open_since') || 0) || null,
       vps_tunnel: !!this.meta('vps_tunnel'), vps_used: this.vpsUsed(), vps_free: this.vpsFree(),
