@@ -1041,7 +1041,12 @@ export class Store extends DurableObject {
     const title = cleanName(info.title || f.name).slice(0, 120);
     this.sql.exec(`UPDATE files SET status='link_choose', name=?, duration=?, formats=? WHERE id=?`,
       title, Math.round(info.duration || 0) || null, JSON.stringify({ thumbnail: info.thumbnail || null, formats }), id);
-    await this.showQualities(this.one('SELECT * FROM files WHERE id=?', id));
+    const nf = this.one('SELECT * FROM files WHERE id=?', id);
+    if (formats.length === 1 && !this.noRoomFor(nf, this.user(nf.owner), formats[0].size || 0)) {
+      await this.startLinkDownload(nf, formats[0]);
+      return Response.json({ ok: true, started: true });
+    }
+    await this.showQualities(nf);
     return Response.json({ ok: true });
   }
 
@@ -1064,21 +1069,33 @@ export class Store extends DurableObject {
     if (!f) return answer('این درخواست منقضی شده است');
     const q = JSON.parse(f.formats).formats[Number(idx)];
     if (!q) return answer();
-    const size = q.size || 0;
+    const why = this.noRoomFor(f, user, q.size || 0);
+    if (why) return answer(why, true);
+    await this.startLinkDownload(f, q);
+    return answer('دانلود شروع شد');
+  }
+
+  // Why this download can't start (no room / fair use), or null.
+  noRoomFor(f, user, size) {
     if (f.storage === 'cf') {
-      if (size > this.cfFree()) return answer(`فضای Cloudflare کافی نیست (${fmtSize(size)} لازم است، آزاد: ${fmtSize(this.cfFree())}).`, true);
+      if (size > this.cfFree()) return `فضای Cloudflare کافی نیست (${fmtSize(size)} لازم است، آزاد: ${fmtSize(this.cfFree())}).`;
     } else if (f.storage === 'vps') {
-      if (size > this.vpsFree()) return answer(`فضای VPS کافی نیست (${fmtSize(size)} لازم است، آزاد: ${fmtSize(this.vpsFree())}).`, true);
+      if (size > this.vpsFree()) return `فضای VPS کافی نیست (${fmtSize(size)} لازم است، آزاد: ${fmtSize(this.vpsFree())}).`;
     } else {
-      if (size > this.freeFor(user)) return answer(`فضای کافی ندارید (${fmtSize(size)} لازم است). فایل‌های قدیمی را پاک کنید یا اشتراک بگیرید.`, true);
-      if (this.monthUsage(user).up + size > this.limits(user).upCap) return answer('به سقف مصرف منصفانه آپلود این ماه رسیده‌اید.', true);
+      if (size > this.freeFor(user)) return `فضای کافی ندارید (${fmtSize(size)} لازم است). فایل‌های قدیمی را پاک کنید یا اشتراک بگیرید.`;
+      if (this.monthUsage(user).up + size > this.limits(user).upCap) return 'به سقف مصرف منصفانه آپلود این ماه رسیده‌اید.';
     }
+    return null;
+  }
+
+  async startLinkDownload(f, q) {
+    const id = f.id;
+    const size = q.size || 0;
     const ext = q.audio ? 'm4a' : 'mp4';
     this.sql.exec(`UPDATE files SET status='link_download', fmt=?, size=?, kind=?, mime=?, obj_key=? WHERE id=?`,
       JSON.stringify(q), size, q.audio ? 'audio' : 'video', q.audio ? 'audio/mp4' : 'video/mp4', `f/${id}/${cleanName(f.name)}.${ext}`, id);
-    await this.edit(f.chat_id, f.msg_id, `⏳ <b>${esc(f.name)}</b> — ${esc(q.label)}${f.storage === 'cf' ? ' · ☁️ Cloudflare' : ''}\nدر حال دانلود و انتقال به تلویزیون…`, [[{ text: '❌ لغو', callback_data: `c:${id}` }]]);
+    await this.edit(f.chat_id, f.msg_id, `⏳ <b>${esc(f.name)}</b> — ${esc(q.label)}${f.storage === 'cf' ? ' · ☁️ Cloudflare' : f.storage === 'vps' ? ' · 🖥 VPS' : ''}\nدر حال دانلود و انتقال به تلویزیون…`, [[{ text: '❌ لغو', callback_data: `c:${id}` }]]);
     await this.wakeHelper();
-    return answer('دانلود شروع شد');
   }
 
   tutorialText() {
