@@ -12,7 +12,7 @@ import { AwsClient } from 'aws4fetch';
 import { vpsPanel } from './vpspanel.js';
 
 const CHUNK = 1_900_000;              // in-DO storage chunk (owner's Cloudflare storage)
-const VPS_CAP = 5 * 1024 ** 3;          // owner's storage on the VPS disk
+const VPS_CAP = 5 * 1024 ** 3;          // owner's storage on the VPS disk (default; wrangler.toml VPS_CAP_GB overrides)
 const CF_CAP = 4_600_000_000;         // free plan: 5 GB of Durable Object storage per account
 const TG_BOT_MAX = 20 * 1024 * 1024;  // Bot API getFile limit; bigger files go to the helper
 const TG_MAX = 2000 * 1024 * 1024;    // Telegram's file limit for bots (MTProto)
@@ -1314,7 +1314,8 @@ export class Store extends DurableObject {
   // internet through a Cloudflare quick tunnel (outbound only) and tells us the tunnel name when it
   // checks in. The TV asks this Worker; we redirect it to the tunnel with a link that expires.
   vpsUsed() { return this.one(`SELECT COALESCE(SUM(size),0) AS s FROM files WHERE storage='vps' AND status IN ${ACTIVE}`).s; }
-  vpsFree() { return Math.max(0, VPS_CAP - this.vpsUsed()); }
+  vpsCap() { return (Number(this.env.VPS_CAP_GB) || 0) * 1024 ** 3 || VPS_CAP; }
+  vpsFree() { return Math.max(0, this.vpsCap() - this.vpsUsed()); }
 
   async vpsSig(id, exp) {
     const key = await crypto.subtle.importKey('raw', enc.encode(this.env.HELPER_SECRET), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
@@ -1601,7 +1602,7 @@ export class Store extends DurableObject {
       stores: this.isAdmin(uid) ? [
         { key: 'arvan', used: this.userUsed(uid), cap: null },
         { key: 'cf', used: Math.max(0, CF_CAP - this.cfFree()), cap: CF_CAP },
-        { key: 'vps', used: this.vpsUsed(), cap: VPS_CAP },
+        { key: 'vps', used: this.vpsUsed(), cap: this.vpsCap() },
       ] : undefined,
       watch: {
         month: monthKey(), used: mu.watch,
@@ -2413,7 +2414,7 @@ export class Store extends DurableObject {
     try { if (this.budget() > 4) await this.helperWatch(); } catch (e) { console.log('helper watch failed', e.stack || e); }
     try {
       // the owner's own domain was set or changed: rewrite his TV list right away
-      const dom = (this.ownDomain() || '') + '|private'; // bump the suffix to force one rewrite of the owner's TV list
+      const dom = (this.ownDomain() || '') + '|cap'; // bump the suffix to force one rewrite of the owner's TV list
       if ((this.meta('own_domain') || '') !== dom && this.budget() > 6) {
         await this.writeManifest(Number(this.env.OWNER_ID));
         this.meta('own_domain', dom);
